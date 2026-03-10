@@ -22,3 +22,15 @@ python3 -m http.server 8000
 ```
 
 Then browse to `http://localhost:8000`.
+
+## GitHub Pages deployment
+This repository now includes a GitHub Actions workflow at
+`.github/workflows/deploy-pages.yml` to automatically publish the static site.
+
+### One-time repository settings
+1. Push to the `main` branch (or trigger the workflow manually from Actions).
+2. In GitHub, open **Settings → Pages**.
+3. Ensure **Source** is set to **GitHub Actions**.
+
+After the workflow succeeds, your site will be available at:
+`https://<your-github-username>.github.io/<repository-name>/`.
