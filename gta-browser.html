@@ -29,6 +29,11 @@ body { background:#000; overflow:hidden; font-family:"Courier New",monospace; }
 #wasted-screen { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(139,0,0,0); display:flex; flex-direction:column; align-items:center; justify-content:center; pointer-events:none; transition:background 0.5s; }
 #wasted-text { color:#FF4444; font-size:72px; font-weight:bold; letter-spacing:8px; text-shadow:0 0 30px #ff0000; opacity:0; transition:opacity 0.5s; font-family:"Arial Black",sans-serif; }
 #wasted-sub { color:#fff; font-size:18px; margin-top:16px; opacity:0; transition:opacity 0.5s 0.5s; }
+#zone-label { position:absolute; top:140px; left:50%; transform:translateX(-50%); color:#FFD700; font-size:22px; font-weight:bold; text-shadow:2px 2px #000,0 0 20px rgba(255,200,0,0.8); opacity:0; transition:opacity 0.5s; pointer-events:none; letter-spacing:4px; }
+#mission-panel { position:absolute; top:16px; left:50%; transform:translateX(-50%); color:#fff; font-size:13px; background:rgba(0,0,0,0.82); padding:8px 18px; border-radius:6px; border:1px solid #FFD700; display:none; max-width:520px; text-align:center; }
+#mission-title { color:#FFD700; font-size:15px; font-weight:bold; margin-bottom:4px; letter-spacing:1px; }
+#mission-desc { color:#ccc; font-size:12px; }
+#mission-obj { color:#00FF41; font-size:12px; margin-top:4px; font-weight:bold; }
 </style>
 </head>
 <body>
@@ -44,7 +49,9 @@ body { background:#000; overflow:hidden; font-family:"Courier New",monospace; }
   <div id="message"></div>
   <div id="notification"></div>
   <div id="loc-hint"></div>
-  <div id="controls-hint">WASD:Move/Steer | E:Enter/Exit | Q:Alt+ Z:Alt- | SPACE:Attack | SHIFT:Sprint | F:Interact | G:Repair | H:Drug | R:Respawn</div>
+  <div id="zone-label"></div>
+  <div id="mission-panel"><div id="mission-title"></div><div id="mission-desc"></div><div id="mission-obj"></div></div>
+  <div id="controls-hint">WASD:Move/Steer | E:Enter/Exit | Q:Alt+ Z:Alt- | SPACE:Attack | SHIFT:Sprint | F:Interact | G:Repair | H:Drug | R:Respawn | M:Next Mission</div>
   <div id="altitude-bar" style="position:absolute;top:16px;left:50%;transform:translateX(-50%);color:#adf;font-size:13px;font-weight:bold;text-shadow:1px 1px #000;display:none;background:rgba(0,0,0,0.55);padding:4px 14px;border-radius:6px;letter-spacing:1px;"></div>
 </div>
 <div id="wasted-screen"><div id="wasted-text">WASTED</div><div id="wasted-sub">Press R to Respawn</div></div>
@@ -54,9 +61,17 @@ body { background:#000; overflow:hidden; font-family:"Courier New",monospace; }
 const canvas=document.getElementById('gc'),ctx=canvas.getContext('2d');
 const mmc=document.getElementById('minimap'),mmx=mmc.getContext('2d');
 canvas.width=window.innerWidth; canvas.height=window.innerHeight;
-const TS=32,MW=160,MH=180,CELL=14;
-const T_GRASS=0,T_ROAD=1,T_SW=2,T_BUILD=3,T_WATER=4,T_PARK=5,T_PARK2=6,T_BEACH=7,T_OCEAN=8,T_RUNWAY=9;
-const map=[],bldgs=[],roadPts=[],swPts=[],SPECIAL_LOCS=[];
+const TS=32,MW=320,MH=340,CELL=14;
+// Zone boundaries (in tiles)
+const CITY1_X2=140;  // City 1 (Liberty City) east edge
+const CITY2_X1=178;  // City 2 (Vice City) west edge
+const RURAL_Y=155;   // Rural area starts here (y tile)
+const MIL={x1:126,x2:190,y1:162,y2:228}; // Military base tile bounds
+const AP1={x1:100,x2:140,y1:8,y2:50};    // City 1 airport tile bounds
+const AP2={x1:278,x2:320,y1:8,y2:50};    // City 2 airport tile bounds
+const BEACH_Y=238,OCEAN_Y=270;
+const T_GRASS=0,T_ROAD=1,T_SW=2,T_BUILD=3,T_WATER=4,T_PARK=5,T_PARK2=6,T_BEACH=7,T_OCEAN=8,T_RUNWAY=9,T_MIL=10;
+const map=[],bldgs=[],roadPts=[],swPts=[],city1RoadPts=[],city2RoadPts=[],SPECIAL_LOCS=[];
 const BWALL=['#8B7355','#A0856C','#6B7280','#7C6D5E','#9B8B7A','#C4956A','#A67C52','#8A9BA8','#7B8FA1','#6B5545'];
 const BROOF=['#5C4A3E','#4A5568','#2D3748','#553C2E','#3D5A6B','#4A3728','#394556','#5A4A3A','#2C3E50','#4A3320'];
 const CAR_COLS=['#E53E3E','#3182CE','#38A169','#D69E2E','#805AD5','#DD6B20','#E2E8F0','#FC8181','#F6AD55','#B7791F'];
@@ -64,16 +79,22 @@ const SKIN_TONES=['#FDBCB4','#F1C27D','#E0AC69','#C68642','#8D5524','#FFDAB9','#
 const SHIRT_COLS=['#E53E3E','#3182CE','#38A169','#805AD5','#DD6B20','#2D3748','#E2E8F0','#ED64A6','#ECC94B','#00B5D8','#F56500','#1A202C'];
 const PANTS_COLS=['#2D3748','#1A365D','#1C4532','#44337A','#742A2A','#234E52','#000','#4A5568','#744210'];
 const HAIR_COLS=['#1A202C','#744210','#B7791F','#E53E3E','#805AD5','#F6E05E','#A0AEC0','#276749'];
+const SPORTS_COLS=['#FF0044','#FFCC00','#00FFAA','#FF6600','#CC00FF','#00CCFF','#FF3388'];
 const VEH_CFG={
-  car:   {w:32,h:18,mxS:4.2,acc:0.16,fr:0.93,trn:0.055,hp:200,name:'Car',   cols:CAR_COLS,sell:1200},
-  van:   {w:38,h:22,mxS:3.0,acc:0.11,fr:0.92,trn:0.042,hp:320,name:'Van',   cols:['#4A5568','#718096','#E2E8F0','#A0AEC0','#2D3748'],sell:1800},
-  truck: {w:52,h:24,mxS:2.2,acc:0.07,fr:0.90,trn:0.032,hp:600,name:'Truck', cols:['#744210','#975A16','#B7791F','#C05621','#D69E2E'],sell:3500},
-  bike:  {w:20,h:10,mxS:5.8,acc:0.24,fr:0.95,trn:0.10, hp:80, name:'Bike',  cols:['#E53E3E','#1A202C','#F6AD55','#805AD5','#3182CE'],sell:900},
-  heli:  {w:44,h:28,mxS:5.0,acc:0.0, fr:0.96,trn:0.07, hp:300,name:'Heli',  cols:['#2D3748','#4A5568','#718096'],flies:true,sell:18000},
-  plane: {w:64,h:18,mxS:9.0,acc:0.22,fr:0.99,trn:0.025,hp:400,name:'Plane', cols:['#E2E8F0','#CBD5E0','#A0AEC0'],flies:true,sell:30000},
-  boat:  {w:38,h:16,mxS:3.8,acc:0.14,fr:0.91,trn:0.06, hp:180,name:'Boat',  cols:['#2B6CB0','#3182CE','#F6AD55','#DD6B20'],floats:true,sell:5000},
-  police:{w:32,h:18,mxS:4.8,acc:0.22,fr:0.93,trn:0.07, hp:280,name:'Police',cols:['#0f2b5a'],isPol:true,sell:0},
-  polheli:{w:44,h:28,mxS:5.5,acc:0.20,fr:0.96,trn:0.07,hp:350,name:'PolHeli',cols:['#0f2b5a'],flies:true,isPol:true,sell:0},
+  car:    {w:32,h:18,mxS:4.2, acc:0.16,fr:0.93,trn:0.055,hp:200, name:'Car',    cols:CAR_COLS,sell:1200},
+  van:    {w:38,h:22,mxS:3.0, acc:0.11,fr:0.92,trn:0.042,hp:320, name:'Van',    cols:['#4A5568','#718096','#E2E8F0','#A0AEC0','#2D3748'],sell:1800},
+  truck:  {w:52,h:24,mxS:2.2, acc:0.07,fr:0.90,trn:0.032,hp:600, name:'Truck',  cols:['#744210','#975A16','#B7791F','#C05621','#D69E2E'],sell:3500},
+  bike:   {w:20,h:10,mxS:5.8, acc:0.24,fr:0.95,trn:0.10, hp:80,  name:'Bike',   cols:['#E53E3E','#1A202C','#F6AD55','#805AD5','#3182CE'],sell:900},
+  heli:   {w:44,h:28,mxS:5.0, acc:0.0, fr:0.96,trn:0.07, hp:300, name:'Heli',   cols:['#2D3748','#4A5568','#718096'],flies:true,sell:18000},
+  plane:  {w:64,h:18,mxS:9.0, acc:0.22,fr:0.99,trn:0.025,hp:400, name:'Plane',  cols:['#E2E8F0','#CBD5E0','#A0AEC0'],flies:true,sell:30000},
+  boat:   {w:38,h:16,mxS:3.8, acc:0.14,fr:0.91,trn:0.06, hp:180, name:'Boat',   cols:['#2B6CB0','#3182CE','#F6AD55','#DD6B20'],floats:true,sell:5000},
+  police: {w:32,h:18,mxS:4.8, acc:0.22,fr:0.93,trn:0.07, hp:280, name:'Police', cols:['#0f2b5a'],isPol:true,sell:0},
+  polheli:{w:44,h:28,mxS:5.5, acc:0.20,fr:0.96,trn:0.07, hp:350, name:'PolHeli',cols:['#0f2b5a'],flies:true,isPol:true,sell:0},
+  sports: {w:30,h:15,mxS:7.5, acc:0.30,fr:0.96,trn:0.075,hp:140, name:'Sports', cols:SPORTS_COLS,sell:45000},
+  muscle: {w:36,h:19,mxS:6.0, acc:0.25,fr:0.94,trn:0.060,hp:220, name:'Muscle', cols:['#CC2200','#332200','#220044','#004422'],sell:25000},
+  tank:   {w:56,h:30,mxS:1.6, acc:0.05,fr:0.88,trn:0.022,hp:3000,name:'Tank',   cols:['#4a5a30'],isMil:true,sell:0,hasCannon:true},
+  f16:    {w:60,h:16,mxS:13.0,acc:0.40,fr:0.995,trn:0.018,hp:600,name:'F-16',   cols:['#8a9a70'],flies:true,isMil:true,sell:0,hasRockets:true},
+  miljeep:{w:34,h:18,mxS:3.8, acc:0.14,fr:0.91,trn:0.058,hp:380, name:'MilJeep',cols:['#4a5a30'],isMil:true,sell:0},
 };
 const WALK_CYCLE=[];
 for(let f=0;f<10;f++){const t=f/10*Math.PI*2;WALK_CYCLE.push([Math.sin(t)*0.55,Math.sin(t+Math.PI)*0.55,Math.sin(t+Math.PI)*0.32,Math.sin(t)*0.32]);}
@@ -97,6 +118,8 @@ function sound(type){
   else if(type==='cash'){const o=ac.createOscillator();o.type='triangle';o.frequency.setValueAtTime(1000,t);o.frequency.setValueAtTime(1200,t+0.05);g.gain.setValueAtTime(0.3,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.2);o.connect(g);o.start(t);o.stop(t+0.2);}
   else if(type==='repair'){mk(80,'square',0.35,0.2);}
   else if(type==='club'){const o=ac.createOscillator();o.type='sine';o.frequency.setValueAtTime(60,t);g.gain.setValueAtTime(0.35,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.2);o.connect(g);o.start(t);o.stop(t+0.2);}
+  else if(type==='rocket'){const buf=ac.createBuffer(1,ac.sampleRate*0.5,ac.sampleRate);const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*(1-i/d.length*0.6);const src=ac.createBufferSource();src.buffer=buf;src.connect(g);g.gain.setValueAtTime(0.8,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.5);src.start(t);src.stop(t+0.5);}
+  else if(type==='cannon'){const buf=ac.createBuffer(1,ac.sampleRate*0.9,ac.sampleRate);const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*(1-i/d.length*0.5);const src=ac.createBufferSource();src.buffer=buf;const flt=ac.createBiquadFilter();flt.type='lowpass';flt.frequency.value=180;src.connect(flt);flt.connect(g);g.gain.setValueAtTime(1.4,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.9);src.start(t);src.stop(t+0.9);}
   }catch(e){}
 }
 
@@ -106,12 +129,16 @@ const RI=(a,b)=>Math.floor(R(a,b+1));
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const dst=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 function tileAt(px,py){const tx=px/TS|0,ty=py/TS|0;if(tx<0||ty<0||tx>=MW||ty>=MH)return T_GRASS;return map[ty]?.[tx]??T_GRASS;}
-function drivable(px,py){const t=tileAt(px,py);return t===T_ROAD||t===T_SW||t===T_PARK2||t===T_RUNWAY||t===T_BEACH;}
-function npcDrivable(px,py){const t=tileAt(px,py);return t===T_ROAD||t===T_PARK2||t===T_RUNWAY;}
+function drivable(px,py){const t=tileAt(px,py);return t===T_ROAD||t===T_SW||t===T_PARK2||t===T_RUNWAY||t===T_BEACH||t===T_MIL;}
+function npcDrivable(px,py){const t=tileAt(px,py);return t===T_ROAD||t===T_PARK2||t===T_RUNWAY||t===T_MIL;}
 function walkable(px,py){const t=tileAt(px,py);return t!==T_BUILD&&t!==T_WATER&&t!==T_OCEAN;}
-function pedWalkable(px,py){const t=tileAt(px,py);return t===T_SW||t===T_GRASS||t===T_PARK||t===T_PARK2||t===T_BEACH;}
+function pedWalkable(px,py){const t=tileAt(px,py);return t===T_SW||t===T_GRASS||t===T_PARK||t===T_PARK2||t===T_BEACH||t===T_MIL;}
 function onWater(px,py){const t=tileAt(px,py);return t===T_OCEAN||t===T_WATER;}
 function randRoad(){return roadPts[RI(0,roadPts.length-1)]||{x:1200,y:1200};}
+function randCity1Road(){return city1RoadPts.length?city1RoadPts[RI(0,city1RoadPts.length-1)]:randRoad();}
+function randCity2Road(){return city2RoadPts.length?city2RoadPts[RI(0,city2RoadPts.length-1)]:randRoad();}
+function inCity2Zone(){return G.player&&G.player.x>CITY2_X1*TS&&G.player.y<RURAL_Y*TS;}
+function inMilBase(){return G.player&&G.player.x>MIL.x1*TS&&G.player.x<MIL.x2*TS&&G.player.y>MIL.y1*TS&&G.player.y<MIL.y2*TS;}
 function nrm(x,y){const l=Math.hypot(x,y)||1;return{x:x/l,y:y/l};}
 function addExplosion(x,y){
   for(let i=0;i<55;i++){const a=R(0,Math.PI*2),s=R(1.5,6);G.particles.push(new Particle(x,y,Math.cos(a)*s,Math.sin(a)*s,i<35?'hsl('+(RI(0,40))+',100%,'+(RI(45,65))+'%)':'#888',R(400,900),R(3,9)));}
@@ -121,8 +148,10 @@ function notify(msg,dur=2200){const el=document.getElementById('notification');e
 function showLocHint(msg){const el=document.getElementById('loc-hint');el.innerHTML=msg;el.style.opacity=1;}
 function hideLocHint(){document.getElementById('loc-hint').style.opacity=0;}
 function addMoney(n){G.money+=n;document.getElementById('money').textContent='$'+G.money;}
-function randAppearance(isCop=false){
-  return{skin:SKIN_TONES[RI(0,SKIN_TONES.length-1)],shirt:isCop?'#1E3A8A':SHIRT_COLS[RI(0,SHIRT_COLS.length-1)],pants:isCop?'#1A365D':PANTS_COLS[RI(0,PANTS_COLS.length-1)],hair:HAIR_COLS[RI(0,HAIR_COLS.length-1)]};
+function randAppearance(isCop=false,isMil=false){
+  const skin=SKIN_TONES[RI(0,SKIN_TONES.length-1)];
+  if(isMil)return{skin,shirt:'#4a5a30',pants:'#3a4a20',hair:HAIR_COLS[RI(0,HAIR_COLS.length-1)]};
+  return{skin,shirt:isCop?'#1E3A8A':SHIRT_COLS[RI(0,SHIRT_COLS.length-1)],pants:isCop?'#1A365D':PANTS_COLS[RI(0,PANTS_COLS.length-1)],hair:HAIR_COLS[RI(0,HAIR_COLS.length-1)]};
 }
 
 // Map generation
@@ -130,10 +159,38 @@ function genMap(){
   for(let y=0;y<MH;y++){
     map[y]=[];
     for(let x=0;x<MW;x++){
-      if(y>=148){map[y][x]=T_OCEAN;continue;}
-      if(y>=136){map[y][x]=T_BEACH;continue;}
-      if(x>=104&&y<=55){map[y][x]=genAirportTile(x,y);continue;}
-      if(y>=58&&y<=64){map[y][x]=T_WATER;continue;}
+      // Ocean at bottom
+      if(y>=OCEAN_Y){map[y][x]=T_OCEAN;continue;}
+      // Beach strip
+      if(y>=BEACH_Y){map[y][x]=T_BEACH;continue;}
+      // Airport 1 (City 1, top-right of city 1)
+      if(x>=AP1.x1&&x<AP1.x2&&y>=AP1.y1&&y<AP1.y2){map[y][x]=genAirportTile(x,y,AP1,1);continue;}
+      // Airport 2 (City 2, top-right of city 2)
+      if(x>=AP2.x1&&x<AP2.x2&&y>=AP2.y1&&y<AP2.y2){map[y][x]=genAirportTile(x,y,AP2,2);continue;}
+      // Military base
+      if(x>=MIL.x1&&x<MIL.x2&&y>=MIL.y1&&y<MIL.y2){map[y][x]=genMilTile(x,y);continue;}
+      // Rural area (below both cities but above beach)
+      if(y>=RURAL_Y&&y<BEACH_Y){
+        // Rural uses same CELL grid but no buildings — just grass, roads, and sidewalks
+        const cx=x%CELL,cy=y%CELL;
+        if(cx===1||cx===2||cy===1||cy===2)map[y][x]=T_ROAD;
+        else if(cx===0||cx===3||cy===0||cy===3)map[y][x]=T_SW;
+        else map[y][x]=T_GRASS;
+        continue;
+      }
+      // Highway corridor between cities (no buildings)
+      if(x>=CITY1_X2&&x<CITY2_X1&&y<RURAL_Y){
+        const cx=x%CELL,cy=y%CELL;
+        if(cx===1||cx===2||cy===1||cy===2)map[y][x]=T_ROAD;
+        else if(cx===0||cx===3||cy===0||cy===3)map[y][x]=T_SW;
+        else map[y][x]=T_GRASS;
+        continue;
+      }
+      // City 1 river (Liberty City)
+      if(y>=58&&y<=64&&x<CITY1_X2){map[y][x]=T_WATER;continue;}
+      // City 2 river (Vice City)
+      if(y>=72&&y<=78&&x>=CITY2_X1){map[y][x]=T_WATER;continue;}
+      // Standard city cell grid (city 1 and city 2)
       const cx=x%CELL,cy=y%CELL;
       const bx=Math.floor(x/CELL),by=Math.floor(y/CELL);
       const bs=(bx*7+by*13)%22;
@@ -144,89 +201,167 @@ function genMap(){
       else map[y][x]=T_BUILD;
     }
   }
-  // River bridges
+  // City 1 river bridges
   for(let y=58;y<=64;y++){
-    [15,16,17,18,42,43,44,45,70,71,72,73,98,99,100,101].forEach(bx=>{if(bx<MW)map[y][bx]=T_ROAD;});
+    [15,16,17,18,42,43,44,45,70,71,72,73,98,99,100,101].forEach(bx=>{if(bx<CITY1_X2)map[y][bx]=T_ROAD;});
+  }
+  // City 2 river bridges
+  for(let y=72;y<=78;y++){
+    [182,183,184,185,210,211,212,213,238,239,240,241,266,267,268,269,294,295,296,297].forEach(bx=>{if(bx<MW)map[y][bx]=T_ROAD;});
   }
   // Beach road access
-  for(let x=0;x<104;x++){const cx=x%CELL;if(cx===1||cx===2){map[133][x]=T_ROAD;map[134][x]=T_ROAD;}}
-  // Road points
+  for(let x=0;x<CITY1_X2;x++){const cx=x%CELL;if(cx===1||cx===2){if(BEACH_Y+2<MH)map[BEACH_Y-3][x]=T_ROAD;}}
+  for(let x=CITY2_X1;x<MW;x++){const cx=x%CELL;if(cx===1||cx===2){if(BEACH_Y+2<MH)map[BEACH_Y-3][x]=T_ROAD;}}
+  // Road points — split into city zones
   for(let y=1;y<MH-1;y++)for(let x=1;x<MW-1;x++){
-    if(map[y][x]===T_ROAD)roadPts.push({x:x*TS+TS/2,y:y*TS+TS/2});
+    if(map[y][x]===T_ROAD){
+      const pt={x:x*TS+TS/2,y:y*TS+TS/2};
+      roadPts.push(pt);
+      if(x<CITY1_X2&&y<RURAL_Y)city1RoadPts.push(pt);
+      if(x>=CITY2_X1&&y<RURAL_Y)city2RoadPts.push(pt);
+    }
     if(map[y][x]===T_SW)swPts.push({x:x*TS+TS/2,y:y*TS+TS/2});
   }
-  // City buildings
-  for(let by2=0;by2<Math.floor(MH/CELL);by2++){
-    for(let bx2=0;bx2<Math.floor(MW/CELL);bx2++){
+  // City 1 buildings
+  for(let by2=0;by2<Math.floor(RURAL_Y/CELL);by2++){
+    for(let bx2=0;bx2<Math.floor(CITY1_X2/CELL);bx2++){
       const tX=bx2*CELL+4,tY=by2*CELL+4;
-      if(tX>=104&&tY<=4)continue;
-      if(tY>=136)continue;
+      if(tX>=AP1.x1&&tY<AP1.y2)continue;
       const bs=(bx2*7+by2*13)%22;
-      if(bs>=5)genBuilding(tX,tY,10,10,bx2,by2);
+      if(bs>=5)genBuilding(tX,tY,10,10,bx2,by2,false);
     }
   }
-  // Airport terminal
+  // City 2 buildings (vice city style)
+  for(let by2=0;by2<Math.floor(RURAL_Y/CELL);by2++){
+    for(let bx2=Math.ceil(CITY2_X1/CELL);bx2<Math.floor(MW/CELL);bx2++){
+      const tX=bx2*CELL+4,tY=by2*CELL+4;
+      if(tX>=AP2.x1&&tY<AP2.y2)continue;
+      const bs=(bx2*7+by2*13)%22;
+      if(bs>=5)genBuilding(tX,tY,10,10,bx2,by2,true);
+    }
+  }
+  // City 1 airport terminal & hangars
   bldgs.push({x:110*TS,y:20*TS,w:18*TS,h:12*TS,wall:'#4A5568',roof:'#2D3748',floors:2,wsX:[],wsY:[],winW:[],sz:4,special:'airport'});
   for(let wx=110*TS+10;wx<128*TS-10;wx+=12)for(let wy=20*TS+10;wy<32*TS-10;wy+=12){const b=bldgs[bldgs.length-1];b.wsX.push(wx);b.wsY.push(wy);b.winW.push(Math.random()>0.3);}
-  // Hangars
-  for(let i=0;i<3;i++){
-    bldgs.push({x:(130+i*8)*TS,y:18*TS,w:7*TS,h:10*TS,wall:'#718096',roof:'#4A5568',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'hangar'});
-  }
+  for(let i=0;i<3;i++)bldgs.push({x:(130+i*8)*TS,y:18*TS,w:7*TS,h:10*TS,wall:'#718096',roof:'#4A5568',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'hangar'});
+  // City 2 airport terminal & hangars
+  bldgs.push({x:285*TS,y:20*TS,w:16*TS,h:11*TS,wall:'#E07040',roof:'#B04020',floors:2,wsX:[],wsY:[],winW:[],sz:4,special:'airport2'});
+  for(let wx=285*TS+10;wx<301*TS-10;wx+=12)for(let wy=20*TS+10;wy<31*TS-10;wy+=12){const b=bldgs[bldgs.length-1];b.wsX.push(wx);b.wsY.push(wy);b.winW.push(Math.random()>0.3);}
+  for(let i=0;i<2;i++)bldgs.push({x:(304+i*8)*TS,y:18*TS,w:7*TS,h:9*TS,wall:'#C08040',roof:'#804020',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'hangar'});
+  // Military base structures
+  bldgs.push({x:(MIL.x1+4)*TS,y:(MIL.y1+12)*TS,w:12*TS,h:14*TS,wall:'#4a5a30',roof:'#3a4a22',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'milhangar'});
+  bldgs.push({x:(MIL.x2-16)*TS,y:(MIL.y1+12)*TS,w:12*TS,h:10*TS,wall:'#4a5a30',roof:'#3a4a22',floors:2,wsX:[],wsY:[],winW:[],sz:4,special:'milbarracks'});
+  bldgs.push({x:(MIL.x1+4)*TS,y:(MIL.y2-18)*TS,w:10*TS,h:10*TS,wall:'#4a5a30',roof:'#3a4a22',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'milstore'});
   placeSpecialLocs();
 }
 
-function genAirportTile(x,y){
-  if(y>=9&&y<=12)return T_RUNWAY;
-  if(y>=40&&y<=43)return T_RUNWAY;
-  if(x>=104&&x<=108&&y>=9&&y<=43)return T_RUNWAY;
-  if(x>=108&&x<=158&&y>=14&&y<=38&&!(x>=130&&y>=18&&y<=28))return T_PARK2;
+function genAirportTile(x,y,ap,apId){
+  const rx=x-ap.x1, ry=y-ap.y1;
+  // Main runway (horizontal)
+  if(ry>=2&&ry<=4)return T_RUNWAY;
+  if(ry>=ap.y2-ap.y1-5&&ry<=ap.y2-ap.y1-3)return T_RUNWAY;
+  // Connecting taxiway (vertical strip)
+  if(rx<=3&&ry>=2&&ry<=ap.y2-ap.y1-3)return T_RUNWAY;
+  // Apron (parking area)
   return T_PARK2;
 }
 
-function genBuilding(tx,ty,bw,bh,bx,by){
+function genMilTile(x,y){
+  const rx=x-MIL.x1, ry=y-MIL.y1;
+  const rw=MIL.x2-MIL.x1, rh=MIL.y2-MIL.y1;
+  // Perimeter road
+  if(rx<=2||rx>=rw-3||ry<=2||ry>=rh-3)return T_ROAD;
+  // F-16 runway strip
+  if(ry>=4&&ry<=6)return T_RUNWAY;
+  // Interior military pavement
+  return T_MIL;
+}
+
+// Vice-city neon wall palettes
+const BWALL_V=['#8B2355','#A02060','#6B0080','#7C1D6E','#9B0B5A','#C41552','#602080','#8A1090','#701060','#500055'];
+const BROOF_V=['#3C0A2E','#2A0538','#1D0748','#350C2E','#2D0A4B','#4A0728','#290956','#3A0A2A','#1C0E40','#3A0320'];
+
+function genBuilding(tx,ty,bw,bh,bx,by,isVice=false){
   const seed=(bx*31+by*37);
-  const wallC=BWALL[seed%BWALL.length],roofC=BROOF[seed%BROOF.length];
-  const pad=1,floors=2+(seed%5);
+  const wallC=isVice?BWALL_V[seed%BWALL_V.length]:BWALL[seed%BWALL.length];
+  const roofC=isVice?BROOF_V[seed%BROOF_V.length]:BROOF[seed%BROOF.length];
+  const pad=1,floors=2+(seed%6);
   const wx=tx+pad,wy=ty+pad,ww=bw-pad*2,wh=bh-pad*2;
   if(ww<2||wh<2)return;
   const wsX=[],wsY=[],winW=[];
-  const sz=4;
-  for(let wy2=wy*TS+8;wy2<(wy+wh)*TS-8;wy2+=sz+8)
-    for(let wx2=wx*TS+8;wx2<(wx+ww)*TS-8;wx2+=sz+8){wsX.push(wx2);wsY.push(wy2);winW.push(Math.random()>0.35);}
-  bldgs.push({x:wx*TS,y:wy*TS,w:ww*TS,h:wh*TS,wall:wallC,roof:roofC,floors,wsX,wsY,winW,sz});
+  const sz=5;
+  for(let wy2=wy*TS+6;wy2<(wy+wh)*TS-6;wy2+=sz+7)
+    for(let wx2=wx*TS+6;wx2<(wx+ww)*TS-6;wx2+=sz+7){wsX.push(wx2);wsY.push(wy2);winW.push(Math.random()>0.3);}
+  // Mark vice city buildings
+  bldgs.push({x:wx*TS,y:wy*TS,w:ww*TS,h:wh*TS,wall:wallC,roof:roofC,floors,wsX,wsY,winW,sz,isVice});
 }
 
 function placeSpecialLocs(){
-  // Garages
-  [[20,8],[48,70],[75,90]].forEach(([tx,ty])=>{
+  // ── CITY 1 (Liberty City) ──
+  // All positions use bx*14+6 pattern so they land on valid building tiles (never on roads/sidewalks)
+  // Garages (city 1) - [tx=bx*14+6, ty=by*14+6]
+  [[20,20],[48,76],[76,104]].forEach(([tx,ty])=>{
     const x=tx*TS,y=ty*TS,w=8*TS,h=6*TS;
     bldgs.push({x,y,w,h,wall:'#276749',roof:'#1C4532',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'garage'});
     SPECIAL_LOCS.push({type:'garage',x,y,w,h,label:"JAKE'S GARAGE &mdash; <b>F</b>: Sell Vehicle &nbsp;|&nbsp; <b>G</b>: Repair"});
   });
-  // Nightclubs
-  [[35,25],[60,85]].forEach(([tx,ty])=>{
-    const x=tx*TS,y=ty*TS,w=10*TS,h=8*TS;
+  // Nightclub (city 1) - ONE only
+  {const tx=34,ty=34,x=tx*TS,y=ty*TS,w=10*TS,h=8*TS;
     bldgs.push({x,y,w,h,wall:'#44337A',roof:'#322659',floors:2,wsX:[],wsY:[],winW:[],sz:4,special:'club',isClub:true});
-    SPECIAL_LOCS.push({type:'nightclub',x,y,w,h,label:"NEON CLUB &mdash; <b>F</b>: Enter ($50) &mdash; Heals 30hp &amp; Speed Boost"});
-  });
-  // Drug dens (last one on far side of town)
-  [[15,40],[55,30],[130,100]].forEach(([tx,ty])=>{
-    const x=tx*TS,y=ty*TS,w=6*TS,h=6*TS;
+    SPECIAL_LOCS.push({type:'nightclub',x,y,w,h,label:"NEON CLUB &mdash; <b>F</b>: Enter ($50) &mdash; Heals 30hp &amp; Speed Boost"});}
+  // Drug Den (city 1) - ONE only, placed well clear of roads
+  {const tx=48,ty=48,x=tx*TS,y=ty*TS,w=6*TS,h=6*TS;
     bldgs.push({x,y,w,h,wall:'#1A202C',roof:'#0A0F0F',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'drugden'});
-    SPECIAL_LOCS.push({type:'drugden',x,y,w,h,label:"DRUG DEN &mdash; <b>F</b>:Speed($200) <b>G</b>:Power($200) <b>H</b>:Trippy($300)"});
-  });
-  // Gun shops
-  [[28,15],[65,55],[90,90]].forEach(([tx,ty])=>{
+    SPECIAL_LOCS.push({type:'drugden',x,y,w,h,label:"DRUG DEN &mdash; <b>F</b>:Speed($200) <b>G</b>:Power($200) <b>H</b>:Trippy($300)"});}
+  // Gun shops (city 1)
+  [[34,20],[62,62],[90,90]].forEach(([tx,ty])=>{
     const x=tx*TS,y=ty*TS,w=7*TS,h=6*TS;
     bldgs.push({x,y,w,h,wall:'#744210',roof:'#553C2E',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'gunshop'});
     SPECIAL_LOCS.push({type:'gunshop',x,y,w,h,label:"AMMU-NATION &mdash; <b>F</b>:Pistol($300) <b>G</b>:Shotgun($500) <b>H</b>:Uzi($700)"});
   });
-  // Boat dock
-  SPECIAL_LOCS.push({type:'boatdock',x:20*TS,y:140*TS,w:12*TS,h:8*TS,label:"BOAT DOCK &mdash; <b>F</b>: Spawn Boat"});
-  // Helipad
+  // City 1 Helipad & Airstrip
   SPECIAL_LOCS.push({type:'helipad',x:112*TS,y:35*TS,w:8*TS,h:8*TS,label:"HELIPAD &mdash; <b>F</b>: Spawn Helicopter"});
-  // Airstrip
-  SPECIAL_LOCS.push({type:'airstrip',x:104*TS,y:9*TS,w:54*TS,h:5*TS,label:"RUNWAY &mdash; <b>F</b>: Spawn Plane (needs speed to fly)"});
+  SPECIAL_LOCS.push({type:'airstrip',x:AP1.x1*TS,y:(AP1.y1+2)*TS,w:(AP1.x2-AP1.x1)*TS,h:3*TS,label:"CITY 1 RUNWAY &mdash; <b>F</b>: Spawn Plane"});
+  // Boat dock (south, near beach)
+  SPECIAL_LOCS.push({type:'boatdock',x:20*TS,y:(BEACH_Y-5)*TS,w:12*TS,h:6*TS,label:"BOAT DOCK &mdash; <b>F</b>: Spawn Boat"});
+
+  // ── CITY 2 (Vice City) ──
+  // Garages (city 2)
+  [[192,76],[248,118]].forEach(([tx,ty])=>{
+    const x=tx*TS,y=ty*TS,w=8*TS,h=6*TS;
+    bldgs.push({x,y,w,h,wall:'#B7791F',roof:'#744210',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'garage'});
+    SPECIAL_LOCS.push({type:'garage',x,y,w,h,label:"VICE GARAGE &mdash; <b>F</b>: Sell Vehicle &nbsp;|&nbsp; <b>G</b>: Repair"});
+  });
+  // Nightclub (city 2) — neon/vice style
+  {const tx=206,ty=76,x=tx*TS,y=ty*TS,w=10*TS,h=8*TS;
+    bldgs.push({x,y,w,h,wall:'#9B1B5A',roof:'#6B0050',floors:2,wsX:[],wsY:[],winW:[],sz:4,special:'club',isClub:true});
+    SPECIAL_LOCS.push({type:'nightclub',x,y,w,h,label:"VICE CLUB &mdash; <b>F</b>: Enter ($50) &mdash; Heals 30hp &amp; Speed Boost"});}
+  // Drug dens (city 2) — 2 dens
+  [[192,48],[234,90]].forEach(([tx,ty])=>{
+    const x=tx*TS,y=ty*TS,w=6*TS,h=6*TS;
+    bldgs.push({x,y,w,h,wall:'#2D0020',roof:'#1A000F',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'drugden'});
+    SPECIAL_LOCS.push({type:'drugden',x,y,w,h,label:"DRUG DEN &mdash; <b>F</b>:Speed($200) <b>G</b>:Power($200) <b>H</b>:Trippy($300)"});
+  });
+  // Gun shops (city 2)
+  [[192,20],[220,62]].forEach(([tx,ty])=>{
+    const x=tx*TS,y=ty*TS,w=7*TS,h=6*TS;
+    bldgs.push({x,y,w,h,wall:'#8B3010',roof:'#5C1A00',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'gunshop'});
+    SPECIAL_LOCS.push({type:'gunshop',x,y,w,h,label:"AMMU-NATION &mdash; <b>F</b>:Pistol($300) <b>G</b>:Shotgun($500) <b>H</b>:Uzi($700)"});
+  });
+  // City 2 Helipad & Airstrip
+  SPECIAL_LOCS.push({type:'helipad',x:290*TS,y:45*TS,w:8*TS,h:6*TS,label:"VICE HELIPAD &mdash; <b>F</b>: Spawn Helicopter"});
+  SPECIAL_LOCS.push({type:'airstrip',x:AP2.x1*TS,y:(AP2.y1+2)*TS,w:(AP2.x2-AP2.x1)*TS,h:3*TS,label:"VICE CITY RUNWAY &mdash; <b>F</b>: Spawn Plane"});
+  // Vice boat dock
+  SPECIAL_LOCS.push({type:'boatdock',x:200*TS,y:(BEACH_Y-5)*TS,w:12*TS,h:6*TS,label:"VICE BOAT DOCK &mdash; <b>F</b>: Spawn Boat"});
+
+  // ── MILITARY BASE ──
+  SPECIAL_LOCS.push({type:'milbase',x:MIL.x1*TS,y:MIL.y1*TS,w:(MIL.x2-MIL.x1)*TS,h:(MIL.y2-MIL.y1)*TS,label:"⚠ MILITARY BASE &mdash; Trespassers will be shot on sight!"});
+  SPECIAL_LOCS.push({type:'milairstrip',x:(MIL.x1+3)*TS,y:(MIL.y1+4)*TS,w:(MIL.x2-MIL.x1-6)*TS,h:3*TS,label:"MILITARY RUNWAY &mdash; <b>F</b>: Steal F-16 (if you dare)"});
+
+  // ── MISSIONS (giver markers) ──
+  MISSIONS_DATA.forEach((m,i)=>{
+    SPECIAL_LOCS.push({type:'mission_giver',missionId:m.id,x:m.giverTile[0]*TS,y:m.giverTile[1]*TS,w:3*TS,h:3*TS,label:'<b>★ MISSION: '+m.name+'</b> &mdash; '+m.desc+' &mdash; <b>F</b>: Accept ($'+m.reward+' reward)'});
+  });
 }
 
 // Entity base
@@ -245,9 +380,49 @@ class Bullet extends Entity{
     for(const e of G.entities){
       if(!e.alive||e===this.owner)continue;
       if(e instanceof Vehicle){if(dst(this,e)<(e.w||32)/2){e.hit(this.dmg,this);this.alive=false;return;}}
-      else if(e instanceof Ped||e instanceof CopOfficer){if(dst(this,e)<e.r+2){e.hit(this.dmg,this);this.alive=false;return;}}
+      else if(e instanceof Ped||e instanceof CopOfficer||e instanceof MilSoldier){if(dst(this,e)<e.r+2){e.hit(this.dmg,this);this.alive=false;return;}}
     }
     if(this.owner!==G.player&&dst(this,G.player)<G.player.r+2){G.player.hit(this.dmg,this);this.alive=false;}
+  }
+}
+
+// Rocket (fired by F-16s and tanks)
+class Rocket extends Entity{
+  constructor(x,y,angle,owner){
+    super(x,y);this.angle=angle;this.owner=owner;this.r=5;
+    this.spd=11;this.life=2400;
+    this.vx=Math.cos(angle)*this.spd;this.vy=Math.sin(angle)*this.spd;
+    this._ex=false;
+  }
+  update(dt){
+    this.x+=this.vx;this.y+=this.vy;this.life-=dt;
+    // Exhaust trail
+    if(Math.random()<0.7)G.particles.push(new Particle(this.x-this.vx*2,this.y-this.vy*2,R(-0.4,0.4),R(-0.4,0.4),'rgba(255,160,30,0.9)',180,R(3,6)));
+    if(Math.random()<0.4)G.particles.push(new Particle(this.x,this.y,R(-0.3,0.3),R(-0.3,0.3),'#888',280,R(2,5)));
+    const t=tileAt(this.x,this.y);
+    if(this.life<=0||t===T_BUILD||t===T_MIL){this.explode();return;}
+    for(const e of G.entities){
+      if(!e.alive||e===this.owner)continue;
+      if(e instanceof Vehicle&&dst(this,e)<(e.w||32)/2+14){this.explode();return;}
+      if((e instanceof Ped||e instanceof CopOfficer||e instanceof MilSoldier)&&dst(this,e)<24){this.explode();return;}
+    }
+    if(this.owner!==G.player&&dst(this,G.player)<24&&!G.player.inCar){this.explode();}
+    if(this.owner!==G.player&&G.player.inCar&&dst(this,G.player.inCar)<(G.player.inCar.w||32)/2+14){this.explode();}
+  }
+  explode(){
+    if(this._ex)return;this._ex=true;
+    addExplosion(this.x,this.y);G.shake=600;sound('rocket');
+    for(const e of G.entities){
+      if(!e.alive)continue;
+      const d=dst(this,e);
+      if(d<140){
+        if(e instanceof Vehicle)e.hit(200,this);
+        else if(e instanceof Ped||e instanceof CopOfficer||e instanceof MilSoldier){if(e.hit)e.hit(120,this);}
+      }
+    }
+    if(dst(this,G.player)<140&&!G.player.inCar)G.player.hit(100,this);
+    if(G.player.inCar&&dst(this,G.player.inCar)<140)G.player.inCar.hit(200,this);
+    this.alive=false;
   }
 }
 
@@ -433,7 +608,7 @@ class Ped extends Entity{
   hit(dmg,src){
     this.hp-=dmg;
     for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#e53e3e',300,3));
-    if(this.hp<=0){const m=RI(10,120);addMoney(m);notify('+$'+m);this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){G.kills++;G.wanted=Math.min(5,G.wanted+2);G.wantedT=0;}}
+    if(this.hp<=0){const m=RI(10,120);addMoney(m);notify('+$'+m);this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){G.kills++;G.wanted=Math.min(5,G.wanted+2);G.wantedT=0;if(G.mission&&G.mission.type==='kill'){const inC2=this.x>CITY2_X1*TS;const inC1=this.x<CITY1_X2*TS;if(G.mission.area==='city2'&&inC2){G.mission.progress++;checkMission();}else if(G.mission.area==='city1'&&inC1){G.mission.progress++;checkMission();}else if(!G.mission.area){G.mission.progress++;checkMission();}}updateMissionObj();}}
   }
 }
 
@@ -467,6 +642,58 @@ class CopOfficer extends Entity{
   }
 }
 
+// Military Soldier — patrols military base, attacks on sight
+class MilSoldier extends Entity{
+  constructor(x,y){
+    super(x,y);this.r=9;this.spd=2.4;this.hp=80;
+    this.appearance=randAppearance(false,true);
+    this.walkFrame=RI(0,9);this.angle=R(0,Math.PI*2);
+    this.atkT=0;this.shootT=0;this.stun=0;this.patrolT=R(1000,3000);
+    this.patrolAngle=R(0,Math.PI*2);this.isMil=true;
+  }
+  update(dt){
+    if(this.stun>0){this.stun-=dt;return;}
+    const d=dst(this,G.player);
+    // Become hostile if player enters base without clearance
+    const hostile=inMilBase()&&(G.player.x>0);
+    if(d>500){return;}
+    if(hostile||d<300){
+      const dx=G.player.x-this.x,dy=G.player.y-this.y;
+      this.angle=Math.atan2(dy,dx);
+      if(d>50){const nx=this.x+Math.cos(this.angle)*this.spd,ny=this.y+Math.sin(this.angle)*this.spd;if(walkable(nx,ny)){this.x=nx;this.y=ny;}}
+      if(Math.random()<0.2)this.walkFrame=(this.walkFrame+1)%10;
+      this.atkT-=dt;
+      if(d<42&&this.atkT<=0){G.player.hit(12,this);this.atkT=400;}
+      this.shootT-=dt;
+      if(d>42&&d<320&&this.shootT<=0){
+        G.entities.push(new Bullet(this.x,this.y,this.angle+R(-0.07,0.07),28,this));
+        sound('shoot');this.shootT=R(700,1400);
+      }
+    } else {
+      // Patrol
+      this.patrolT-=dt;
+      if(this.patrolT<=0){this.patrolT=R(800,2500);this.patrolAngle=R(0,Math.PI*2);}
+      const nx=this.x+Math.cos(this.patrolAngle)*this.spd*0.7,ny=this.y+Math.sin(this.patrolAngle)*this.spd*0.7;
+      if(walkable(nx,ny)&&tileAt(nx,ny)===T_MIL||tileAt(nx,ny)===T_ROAD){this.x=nx;this.y=ny;}
+      else this.patrolAngle=R(0,Math.PI*2);
+      this.angle=this.patrolAngle;
+      if(Math.random()<0.1)this.walkFrame=(this.walkFrame+1)%10;
+    }
+  }
+  hit(dmg,src){
+    this.hp-=dmg;this.stun=180;
+    for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#4a6a30',300,3));
+    if(this.hp<=0){
+      this.alive=false;
+      addMoney(RI(50,200));
+      if(src===G.player||src instanceof Bullet&&src.owner===G.player){
+        G.kills++;G.wanted=Math.min(5,G.wanted+2);G.wantedT=0;
+        if(G.mission&&G.mission.type==='kill'&&G.mission.area==='milbase'){G.mission.progress++;checkMission();}
+      }
+    }
+  }
+}
+
 // Player
 class Player extends Entity{
   constructor(x,y){
@@ -497,7 +724,25 @@ class Player extends Entity{
     this.atkT=Math.max(0,this.atkT-dt);
   }
   attack(){
-    if(this.inCar)return;
+    // Vehicle-based attacks
+    if(this.inCar){
+      const car=this.inCar;
+      if(car.vtype==='f16'&&car.altitude>10){
+        if(this.atkT>0)return;
+        this.atkT=600;sound('rocket');
+        G.entities.push(new Rocket(car.x,car.y,car.angle,car));
+        G.entities.push(new Rocket(car.x+Math.cos(car.angle+Math.PI/2)*8,car.y+Math.sin(car.angle+Math.PI/2)*8,car.angle,car));
+        G.particles.push(new Particle(car.x,car.y,R(-1,1),R(-1,1),'rgba(255,150,30,0.9)',200,8));
+        G.wanted=Math.min(5,G.wanted+1);G.wantedT=0;
+      } else if(car.vtype==='tank'){
+        if(this.atkT>0)return;
+        this.atkT=2200;sound('cannon');
+        G.entities.push(new Rocket(car.x+Math.cos(car.angle)*30,car.y+Math.sin(car.angle)*30,car.angle,car));
+        addExplosion(car.x+Math.cos(car.angle)*28,car.y+Math.sin(car.angle)*28,0.4);
+        G.wanted=Math.min(5,G.wanted+1);G.wantedT=0;
+      }
+      return;
+    }
     if(this.atkT>0)return;
     const w=this.weapon;
     if(w==='fists'){
@@ -548,6 +793,78 @@ class Player extends Entity{
   }
 }
 
+// Missions data — giverTile uses bx*14+6 pattern for valid building positions
+const MISSIONS_DATA=[
+  {id:'m1',name:'Armed & Ready',       desc:'Buy a weapon at Ammu-Nation.',     type:'visit',  reward:500,  giverTile:[20,6],  targetLoc:'gunshop',hint:'Head to the gun shop (marked ★)'},
+  {id:'m2',name:'Taxi Run',            desc:'Steal any car & drive to the drop.',type:'goto',   reward:1200, giverTile:[34,6],  targetTile:{x:62,y:62},radius:160,hint:'Drive to the yellow marker'},
+  {id:'m3',name:'City Cleanup',        desc:'Eliminate 5 criminals in Liberty City.',type:'kill',reward:3000,giverTile:[20,48], count:5,area:'city1',hint:'Attack criminals in Liberty City'},
+  {id:'m4',name:'Vice Recon',          desc:'Travel to Vice City & reach the contact.',type:'goto',reward:2500,giverTile:[48,6],targetTile:{x:206,y:48},radius:200,hint:'Go east to Vice City'},
+  {id:'m5',name:'Vice Takedown',       desc:'Eliminate 6 gang members in Vice City.',type:'kill',reward:6000,giverTile:[48,34],count:6,area:'city2',hint:'Fight criminals in Vice City'},
+  {id:'m6',name:'Grand Theft Sports',  desc:'Steal a Sports Car from Vice City & deliver it.',type:'steal_vehicle',reward:10000,giverTile:[76,48],vtype:'sports',deliverTile:{x:48,y:76},hint:'Find a Sports Car in Vice City'},
+  {id:'m7',name:'Military Secrets',    desc:'Infiltrate the military base command center.',type:'goto',reward:20000,giverTile:[90,90],targetTile:{x:155,y:195},radius:180,hint:'Enter the military base (south of cities)',dangerous:true},
+  {id:'m8',name:'Steal the Tank',      desc:'Take a tank from the military base.',type:'steal_vehicle',reward:40000,giverTile:[76,104],vtype:'tank',deliverTile:{x:48,y:104},hint:'Steal a tank from the military base',dangerous:true},
+  {id:'m9',name:'Top Gun',             desc:'Steal an F-16 jet from the military base.',type:'steal_vehicle',reward:100000,giverTile:[90,118],vtype:'f16',deliverTile:null,hint:'Take an F-16 — if you survive!',dangerous:true},
+];
+
+// Mission functions
+function startMission(id){
+  const m=MISSIONS_DATA.find(x=>x.id===id);if(!m)return;
+  if(G.completedMissions.has(id)){notify('Mission already completed!',2000);return;}
+  G.mission={...m,progress:0,state:'active'};
+  showMissionUI();notify('MISSION STARTED: '+m.name,3000);sound('star');
+}
+function checkMission(){
+  const m=G.mission;if(!m||m.state!=='active')return;
+  let done=false;
+  if(m.type==='kill')done=m.progress>=m.count;
+  else if(m.type==='goto'){
+    const tx=m.targetTile.x*TS,ty=m.targetTile.y*TS;
+    if(Math.hypot(G.player.x-tx,G.player.y-ty)<m.radius)done=true;
+  }
+  else if(m.type==='visit')done=m.progress>=1;
+  else if(m.type==='steal_vehicle'){
+    if(G.player.inCar&&G.player.inCar.vtype===m.vtype){
+      if(m.deliverTile){
+        const tx=m.deliverTile.x*TS,ty=m.deliverTile.y*TS;
+        if(Math.hypot(G.player.x-tx,G.player.y-ty)<180)done=true;
+      } else done=true;
+    }
+  }
+  if(done)completeMission();
+}
+function completeMission(){
+  const m=G.mission;if(!m)return;
+  G.completedMissions.add(m.id);
+  addMoney(m.reward);
+  sound('star');
+  notify('★ MISSION COMPLETE: '+m.name+' +$'+m.reward+' ★',4000);
+  const el=document.getElementById('mission-panel');
+  el.style.background='rgba(0,60,0,0.85)';el.style.borderColor='#00FF41';
+  setTimeout(()=>{G.mission=null;hideMissionUI();},4000);
+}
+function showMissionUI(){
+  const m=G.mission;if(!m)return;
+  const el=document.getElementById('mission-panel');
+  el.style.display='block';el.style.background='rgba(0,0,0,0.8)';el.style.borderColor='#FFD700';
+  document.getElementById('mission-title').textContent='★ '+m.name;
+  document.getElementById('mission-desc').textContent=m.desc;
+  updateMissionObj();
+}
+function hideMissionUI(){document.getElementById('mission-panel').style.display='none';}
+function updateMissionObj(){
+  const m=G.mission;if(!m){return;}
+  let txt='';
+  if(m.type==='kill')txt='Eliminated: '+m.progress+'/'+m.count;
+  else if(m.type==='goto')txt='Reach the destination';
+  else if(m.type==='visit')txt='Visit the location';
+  else if(m.type==='steal_vehicle'){txt=m.deliverTile?'Steal '+m.vtype+' and deliver':'Steal the '+m.vtype;if(G.player.inCar&&G.player.inCar.vtype===m.vtype)txt='✓ Got '+m.vtype+' — drive to delivery point!';}
+  document.getElementById('mission-obj').textContent=txt;
+}
+function showZoneLabel(txt){
+  const el=document.getElementById('zone-label');el.textContent=txt;el.style.opacity=1;
+  clearTimeout(G._zoneT);G._zoneT=setTimeout(()=>el.style.opacity=0,3000);
+}
+
 // Game state
 const G={
   player:null,entities:[],particles:[],
@@ -555,24 +872,29 @@ const G={
   time:0,kills:0,score:0,
   camera:{x:0,y:0},shake:0,
   drug:{type:null,timer:0,maxTimer:0},
-  _notifT:null,engineT:0,
+  _notifT:null,_zoneT:null,engineT:0,
   spawnT:0,cleanT:0,wantedSpawnT:0,heliSpawnT:0,
-  // Spawn timers
-  pedSpawnT:0,carSpawnT:0,
-  // Indoor state
+  pedSpawnT:0,carSpawnT:0,milSpawnT:0,
   indoors:null,indoorFloor:0,indoorPlayerX:0,indoorPlayerY:0,
+  // Mission state
+  mission:null,completedMissions:new Set(),
+  // Zone tracking
+  _lastZone:null,
   playerDied(){
     document.getElementById('wasted-screen').style.background='rgba(139,0,0,0.6)';
     document.getElementById('wasted-text').style.opacity=1;
     document.getElementById('wasted-sub').style.opacity=1;
     G.player.alive=false;
+    if(G.mission){G.mission.state='failed';notify('MISSION FAILED!',3000);hideMissionUI();G.mission=null;}
   },
   respawn(){
     document.getElementById('wasted-screen').style.background='rgba(139,0,0,0)';
     document.getElementById('wasted-text').style.opacity=0;
     document.getElementById('wasted-sub').style.opacity=0;
-    const spawn=roadPts[0]||{x:640,y:640};
-    G.player=new Player(spawn.x,spawn.y);
+    // Spawn in center of city 1 — use a road point near tile (70,80)
+    const cx=70*TS,cy=80*TS;
+    let spawnPt=city1RoadPts.length?city1RoadPts.reduce((b,p)=>Math.hypot(p.x-cx,p.y-cy)<Math.hypot(b.x-cx,b.y-cy)?p:b,city1RoadPts[0]):roadPts[Math.floor(roadPts.length/4)]||{x:2240,y:2560};
+    G.player=new Player(spawnPt.x,spawnPt.y);
     G.player.alive=true;G.wanted=0;G.drug={type:null,timer:0,maxTimer:0};
     document.getElementById('drug-bar').style.display='none';
     G.player.updateHpBar();G.player.updateWeaponHUD();
@@ -639,6 +961,16 @@ function interactLoc(loc,key){
       const plane=new Vehicle(loc.x+5*TS,loc.y+TS,'plane');plane.angle=0;
       G.entities.push(plane);notify('Plane ready on runway! Build speed to take off.',2500);
     }
+  } else if(loc.type==='milairstrip'){
+    if(key==='f'){
+      const f16=new Vehicle((MIL.x1+8)*TS,(MIL.y1+5)*TS,'f16');f16.angle=0;
+      G.entities.push(f16);notify('F-16 ready! SPACE to fire rockets. Build speed to take off!',3000);
+      G.wanted=Math.min(5,G.wanted+3);updateWantedBar();
+    }
+  } else if(loc.type==='mission_giver'){
+    if(key==='f'){
+      startMission(loc.missionId);
+    }
   }
 }
 
@@ -663,6 +995,11 @@ document.addEventListener('keydown',e=>{
   }
   if(key==='q'||key==='tab'){e.preventDefault();cycleWeapon();}
   if(key==='r'&&G.player.alive)G.respawn();
+  if(key==='m'){
+    // Cycle to next incomplete mission
+    const next=MISSIONS_DATA.find(m=>!G.completedMissions.has(m.id)&&(!G.mission||m.id!==G.mission.id));
+    if(next)startMission(next.id);else notify('All missions complete! You are a legend.',3000);
+  }
 });
 document.addEventListener('keyup',e=>K[e.key.toLowerCase()]=false);
 canvas.addEventListener('mousemove',e=>{mouseX=e.clientX;mouseY=e.clientY;});
@@ -788,23 +1125,61 @@ function update(dt){
       } else if(walkable(cx,cy)&&!onWater(cx,cy)){G.entities.push(new Ped(cx,cy));}
     }
   }
-  // Spawn NPC cars
+  // Spawn NPC cars — city-zone aware
   G.carSpawnT-=dt;
   if(G.carSpawnT<=0){
-    G.carSpawnT=R(2000,4000);
+    G.carSpawnT=R(1800,3500);
     const carCount=G.entities.filter(e=>e instanceof Vehicle&&e.isNpc&&!e.isPol&&e.alive).length;
-    if(carCount<40){
-      const rp=randRoad();
-      const types=['car','car','car','van','van','truck','bike','bike'];
+    if(carCount<55){
+      const inC2=inCity2Zone();
+      // City 2 spawns more expensive/dangerous vehicles
+      const types=inC2?['sports','sports','muscle','muscle','car','van','bike']:['car','car','car','van','van','truck','bike','bike'];
       const vtype=types[RI(0,types.length-1)];
+      const rp=inC2?randCity2Road():randCity1Road();
       const v=new Vehicle(rp.x,rp.y,vtype);
-      v.isNpc=true;v.driver=v;v.npcTarget=randRoad();
+      v.isNpc=true;v.driver=v;v.npcTarget=inC2?randCity2Road():randCity1Road();
       G.entities.push(v);
+    }
+  }
+  // Military base spawning — soldiers and vehicles
+  G.milSpawnT-=dt;
+  if(G.milSpawnT<=0){
+    G.milSpawnT=R(3000,6000);
+    const milSolCount=G.entities.filter(e=>e instanceof MilSoldier&&e.alive).length;
+    if(milSolCount<12){
+      const sx=R(MIL.x1+4,MIL.x2-4)*TS,sy=R(MIL.y1+8,MIL.y2-4)*TS;
+      G.entities.push(new MilSoldier(sx,sy));
+    }
+    // NPC F-16 patrols when player is at high wanted level or in base
+    if(G.wanted>=4||inMilBase()){
+      const f16Count=G.entities.filter(e=>e instanceof Vehicle&&e.vtype==='f16'&&e.isNpc&&e.alive).length;
+      if(f16Count<2){
+        const f16=new Vehicle((MIL.x1+10)*TS,(MIL.y1+5)*TS,'f16');
+        f16.isNpc=true;f16.driver=f16;f16.isMilNpc=true;
+        f16.npcRocketT=R(4000,7000);
+        G.entities.push(f16);
+      }
     }
   }
   // Update all entities
   for(const e of G.entities){if(e.alive)e.update(dt);}
   for(const p of G.particles){if(p.alive)p.update(dt);}
+  // NPC F-16 AI — fire rockets at player
+  for(const e of G.entities){
+    if(!e.alive||!e.isMilNpc||e.vtype!=='f16')continue;
+    const d=dst(e,G.player);
+    if(d<800){
+      const tgt=G.player.inCar||G.player;
+      e.angle=Math.atan2(tgt.y-e.y,tgt.x-e.x);
+      e.spd=Math.min((e.spd||0)+0.3,e.mxS);
+      e.x+=Math.cos(e.angle)*e.spd;e.y+=Math.sin(e.angle)*e.spd;
+      e.npcRocketT-=dt;
+      if(d<600&&e.npcRocketT<=0){
+        G.entities.push(new Rocket(e.x,e.y,e.angle,e));sound('rocket');
+        e.npcRocketT=R(2500,5000);
+      }
+    }
+  }
   // Cleanup
   G.cleanT-=dt;
   if(G.cleanT<=0){
@@ -814,6 +1189,18 @@ function update(dt){
   }
   // Score
   document.getElementById('score-info').textContent='Score: '+(G.money+G.kills*500)+' | Kills: '+G.kills;
+  // Zone label detection
+  {const zone=inMilBase()?'⚠ MILITARY BASE':inCity2Zone()?'VICE CITY':G.player.y>RURAL_Y*TS?'COUNTRYSIDE':'LIBERTY CITY';
+   if(zone!==G._lastZone){G._lastZone=zone;showZoneLabel(zone);}}
+  // Mission objective check for goto/steal missions
+  if(G.mission&&G.mission.state==='active'){
+    if(G.mission.type==='goto'||G.mission.type==='steal_vehicle')checkMission();
+    if(G.mission.type==='visit'){
+      const loc=getNearbyLoc();
+      if(loc&&loc.type===G.mission.targetLoc){G.mission.progress=1;checkMission();}
+    }
+    updateMissionObj();
+  }
   // Location hint
   const loc=getNearbyLoc();
   if(loc)showLocHint(loc.label);else hideLocHint();
@@ -932,6 +1319,29 @@ function drawCop(cop){
   ctx.restore();
 }
 
+function drawMilSoldier(sol){
+  drawHuman(sol.x,sol.y,sol.angle,sol.walkFrame,sol.appearance,true,'pistol','MIL');
+  // Helmet indicator
+  ctx.save();ctx.translate(sol.x,sol.y);ctx.rotate(sol.angle);
+  ctx.fillStyle='#4a5a30';ctx.beginPath();ctx.arc(6,-1,5.5,Math.PI,0);ctx.fill();
+  ctx.restore();
+}
+
+function drawRocket(r){
+  ctx.save();ctx.translate(r.x,r.y);ctx.rotate(r.angle);
+  // Rocket body
+  ctx.fillStyle='#ccc';ctx.fillRect(-4,-2,10,4);
+  // Nose cone
+  ctx.fillStyle='#aaa';ctx.beginPath();ctx.moveTo(6,0);ctx.lineTo(12,-2);ctx.lineTo(12,2);ctx.closePath();ctx.fill();
+  // Fins
+  ctx.fillStyle='#888';
+  ctx.beginPath();ctx.moveTo(-4,-2);ctx.lineTo(-8,-5);ctx.lineTo(-6,-2);ctx.closePath();ctx.fill();
+  ctx.beginPath();ctx.moveTo(-4,2);ctx.lineTo(-8,5);ctx.lineTo(-6,2);ctx.closePath();ctx.fill();
+  // Exhaust glow
+  ctx.fillStyle='rgba(255,140,0,0.85)';ctx.beginPath();ctx.arc(-5,0,3,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
 // Vehicle rendering
 function drawCar(car){
   ctx.save();ctx.translate(car.x,car.y);ctx.rotate(car.angle);
@@ -942,7 +1352,107 @@ function drawCar(car){
   ctx.fillStyle=car.col;ctx.fillRect(-w/2,-h/2,w,h);
   ctx.fillStyle='rgba(255,255,255,0.1)';ctx.fillRect(-w/2,-h/2,w,h/3);
 
-  if(vt==='bike'){
+  if(vt==='tank'){
+    // Tank body (lower hull)
+    ctx.fillStyle=car.col;ctx.fillRect(-w/2,-h/2,w,h);
+    // Tank tracks on sides
+    ctx.fillStyle='#2a3a18';
+    ctx.fillRect(-w/2,-h/2,8,h);ctx.fillRect(w/2-8,-h/2,8,h);
+    // Track segments
+    ctx.strokeStyle='#1a2a10';ctx.lineWidth=1.5;
+    for(let i=-h/2;i<h/2;i+=6){ctx.beginPath();ctx.moveTo(-w/2,i);ctx.lineTo(-w/2+8,i);ctx.stroke();ctx.beginPath();ctx.moveTo(w/2-8,i);ctx.lineTo(w/2,i);ctx.stroke();}
+    // Hull top plate
+    ctx.fillStyle='#5a6a40';ctx.fillRect(-w/2+8,-h/2+3,w-16,h-6);
+    // Turret base
+    ctx.fillStyle='#4a5a30';ctx.beginPath();ctx.ellipse(-4,0,h*0.45,h*0.4,0,0,Math.PI*2);ctx.fill();
+    // Turret
+    ctx.fillStyle='#3a4a22';ctx.beginPath();ctx.ellipse(-4,0,h*0.38,h*0.32,0,0,Math.PI*2);ctx.fill();
+    // Barrel
+    ctx.fillStyle='#2a3a15';ctx.fillRect(-4,h*0.08,w*0.55,5);ctx.fillRect(-4-3,h*0.08,6,5);
+    // Machine gun on top
+    ctx.fillStyle='#333';ctx.fillRect(0,-3,14,3);
+    // Commander hatch
+    ctx.fillStyle='#5a6a30';ctx.beginPath();ctx.arc(-4,0,5,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#2a3a10';ctx.lineWidth=1;ctx.stroke();
+    // Star insignia
+    ctx.fillStyle='rgba(255,255,255,0.25)';ctx.font='8px Arial';ctx.textAlign='center';ctx.fillText('★',-4,3);
+  } else if(vt==='f16'){
+    // F-16 Fighting Falcon
+    ctx.fillStyle=car.col;
+    // Fuselage
+    ctx.beginPath();ctx.ellipse(-w*0.05,0,w*0.52,h*0.45,0,0,Math.PI*2);ctx.fill();
+    // Nose cone (pointy front)
+    ctx.fillStyle='#6a7a60';
+    ctx.beginPath();ctx.moveTo(-w/2,0);ctx.lineTo(-w*0.15,-h*0.22);ctx.lineTo(-w*0.15,h*0.22);ctx.closePath();ctx.fill();
+    // Delta wings
+    ctx.fillStyle=car.col;ctx.globalAlpha=0.92;
+    ctx.beginPath();ctx.moveTo(-w*0.12,-h*0.45);ctx.lineTo(w*0.2,-h*1.1);ctx.lineTo(w*0.3,-h*1.1);ctx.lineTo(w*0.05,-h*0.45);ctx.closePath();ctx.fill();
+    ctx.beginPath();ctx.moveTo(-w*0.12,h*0.45);ctx.lineTo(w*0.2,h*1.1);ctx.lineTo(w*0.3,h*1.1);ctx.lineTo(w*0.05,h*0.45);ctx.closePath();ctx.fill();
+    ctx.globalAlpha=1;
+    // Tail fins
+    ctx.fillStyle='#7a8a68';
+    ctx.beginPath();ctx.moveTo(w*0.3,-h*0.35);ctx.lineTo(w*0.5,-h*0.55);ctx.lineTo(w*0.48,0);ctx.lineTo(w*0.28,0);ctx.closePath();ctx.fill();
+    ctx.beginPath();ctx.moveTo(w*0.3,h*0.35);ctx.lineTo(w*0.5,h*0.55);ctx.lineTo(w*0.48,0);ctx.lineTo(w*0.28,0);ctx.closePath();ctx.fill();
+    // Cockpit canopy
+    ctx.fillStyle='rgba(100,200,255,0.65)';ctx.beginPath();ctx.ellipse(-w*0.15,0,w*0.18,h*0.35,0,0,Math.PI*2);ctx.fill();
+    // Engine exhaust
+    if(Math.abs(car.spd)>2){ctx.fillStyle='rgba(255,160,30,0.8)';ctx.beginPath();ctx.ellipse(w*0.5,0,6,3,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='rgba(255,80,0,0.5)';ctx.beginPath();ctx.ellipse(w*0.55,0,9,2,0,0,Math.PI*2);ctx.fill();}
+    // Rocket pods under wings
+    ctx.fillStyle='#aaa';ctx.fillRect(w*0.05,-h*0.8,12,4);ctx.fillRect(w*0.05,h*0.8-4,12,4);
+    // Military markings
+    ctx.fillStyle='rgba(255,255,255,0.2)';ctx.font='6px Arial';ctx.textAlign='center';ctx.fillText('F-16',0,3);
+  } else if(vt==='miljeep'){
+    // Military jeep
+    ctx.fillStyle=car.col;ctx.fillRect(-w/2,-h/2,w,h);
+    // Windshield
+    ctx.fillStyle='rgba(150,200,255,0.45)';ctx.fillRect(-w/2+4,-h/2+2,w*0.4,h-4);
+    // Roll bar
+    ctx.strokeStyle='#3a4a22';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(-2,-h/2);ctx.lineTo(-2,h/2);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(-2,-h/2);ctx.lineTo(w/3,-h/2);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(-2,h/2);ctx.lineTo(w/3,h/2);ctx.stroke();
+    // Jerry can on back
+    ctx.fillStyle='#556B2F';ctx.fillRect(w/2-7,-h/2+2,5,h-4);
+    // Tires
+    ctx.fillStyle='#111';
+    [[-w/2+2,-h/2-2],[w/2-7,-h/2-2],[-w/2+2,h/2-3],[w/2-7,h/2-3]].forEach(([tx,ty])=>{ctx.fillRect(tx,ty,5,5);ctx.fillStyle='#333';ctx.fillRect(tx+1,ty+1,3,3);ctx.fillStyle='#111';});
+    // Star
+    ctx.fillStyle='rgba(255,255,255,0.3)';ctx.font='9px Arial';ctx.textAlign='center';ctx.fillText('★',0,3);
+  } else if(vt==='sports'){
+    // Sports car — low and wide
+    ctx.fillStyle=car.col;ctx.fillRect(-w/2,-h/2,w,h);
+    // Aerodynamic slope highlight
+    ctx.fillStyle='rgba(255,255,255,0.12)';ctx.fillRect(-w/2,-h/2,w*0.55,h);
+    // Wide windshield + rear glass
+    ctx.fillStyle='rgba(150,210,255,0.72)';ctx.fillRect(-w*0.22,-h/2+2,w*0.5,h-4);
+    ctx.fillStyle='rgba(120,180,220,0.5)';ctx.fillRect(w*0.3,-h/2+2,w*0.14,h-4);
+    // Side air vents
+    ctx.fillStyle='rgba(0,0,0,0.4)';for(let i=-1;i<=1;i+=1){ctx.fillRect(-w*0.35,i*3,w*0.12,2);}
+    // Spoiler
+    ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(w/2-4,-h/2-3,3,h+6);
+    // Tires (low-profile)
+    ctx.fillStyle='#111';
+    [[-w/2+1,-h/2-2],[w/2-7,-h/2-2],[-w/2+1,h/2-3],[w/2-7,h/2-3]].forEach(([tx,ty])=>{ctx.fillRect(tx,ty,6,5);ctx.fillStyle='#555';ctx.beginPath();ctx.arc(tx+3,ty+2.5,1.5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#111';});
+    // Headlights (glowing)
+    ctx.fillStyle='rgba(255,255,180,0.9)';ctx.fillRect(-w/2,-h/2+2,4,4);ctx.fillRect(-w/2,h/2-6,4,4);
+    ctx.shadowColor='rgba(255,255,0,0.8)';ctx.shadowBlur=4;ctx.fillStyle='rgba(255,250,0,0.7)';ctx.fillRect(-w/2,h/2-6,4,4);ctx.shadowBlur=0;
+  } else if(vt==='muscle'){
+    // Muscle car — wide and aggressive
+    ctx.fillStyle=car.col;ctx.fillRect(-w/2,-h/2,w,h);
+    // Hood scoop
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(-w/2+4,-3,w*0.35,6);
+    ctx.fillStyle='rgba(50,50,50,0.6)';ctx.fillRect(-w/2+6,-2,w*0.3,4);
+    // Windshield
+    ctx.fillStyle='rgba(140,200,255,0.65)';ctx.fillRect(-w*0.25,-h/2+2,w*0.45,h-4);
+    // Rear window
+    ctx.fillStyle='rgba(120,175,220,0.5)';ctx.fillRect(w*0.22,-h/2+2,w*0.18,h-4);
+    // Chrome grill
+    ctx.fillStyle='#aaa';ctx.fillRect(-w/2,-3,6,6);
+    ctx.strokeStyle='#888';ctx.lineWidth=1;for(let i=0;i<3;i++)ctx.strokeRect(-w/2,i*2-2,6,1);
+    // Tires (wide)
+    ctx.fillStyle='#111';
+    [[-w/2,-h/2-3],[w/2-8,-h/2-3],[-w/2,h/2-2],[w/2-8,h/2-2]].forEach(([tx,ty])=>{ctx.fillRect(tx,ty,8,5);ctx.fillStyle='#444';ctx.fillRect(tx+2,ty+1,4,3);ctx.fillStyle='#111';});
+  } else if(vt==='bike'){
     // Motorbike
     ctx.fillStyle='#111';ctx.fillRect(-w/2+1,-3,4,6);ctx.fillRect(w/2-5,-3,4,6);
     ctx.strokeStyle='rgba(180,200,255,0.7)';ctx.lineWidth=1.5;
@@ -1105,10 +1615,10 @@ function drawTiles(){
           if(isHorizOnly&&cy2===2&&x%2===0){ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px+TS,py);ctx.stroke();}
           if(isVertOnly&&cx2===2&&y%2===0){ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px,py+TS);ctx.stroke();}
           ctx.setLineDash([]);
-          // Intersection crosswalk marks
+          // Intersection crosswalk marks (single tile height only — no bridge overlap)
           if(!isVertOnly&&!isHorizOnly&&cy2===1&&cx2===1&&x%3===0){
-            ctx.fillStyle='rgba(255,255,255,0.35)';
-            for(let s=0;s<TS;s+=6)ctx.fillRect(px+s,py,3,TS*2+TS);
+            ctx.fillStyle='rgba(255,255,255,0.28)';
+            for(let s=0;s<TS;s+=5)ctx.fillRect(px+s,py,3,TS);
           }
         } else {
           ctx.strokeStyle='rgba(255,0,255,0.7)';ctx.lineWidth=1.5;ctx.setLineDash([6,6]);
@@ -1161,6 +1671,18 @@ function drawTiles(){
         // Runway markings
         if(x%4===0){ctx.fillStyle=drugT?'rgba(255,255,0,0.8)':'#fff';ctx.fillRect(px+TS/2-1,py,2,TS);}
         if(y%4===0){ctx.fillStyle=drugT?'rgba(255,255,0,0.8)':'#fff';ctx.fillRect(px,py+TS/2-1,TS,2);}
+      } else if(t===T_MIL){
+        // Military compound — olive/khaki pavement with grid markings
+        const milCol=drugT?'hsl('+((x*3+y*2+tt*15)%360)+',60%,40%)':'#4e5e38';
+        ctx.fillStyle=milCol;ctx.fillRect(px,py,TS,TS);
+        if(!drugT){
+          // Grid lines
+          ctx.fillStyle='rgba(0,0,0,0.18)';
+          if(x%2===0)ctx.fillRect(px,py,1,TS);
+          if(y%2===0)ctx.fillRect(px,py,TS,1);
+          // Yellow direction arrows occasionally
+          if(x%8===4&&y%8===4){ctx.fillStyle='rgba(240,200,0,0.4)';ctx.fillRect(px+6,py+TS/2-1,TS-12,2);ctx.fillRect(px+TS-10,py+TS/2-4,4,8);}
+        }
       }
     }
   }
@@ -1180,68 +1702,94 @@ function drawBldgs(){
     else if(b.special==='club'){const beat=Math.sin(tt*4)>0;wc=beat?'#44337A':'#553C8B';}
     else if(b.special==='drugden')wc='#1A202C';
     else if(b.special==='gunshop')wc='#744210';
+    // === BUILDING WALL with pseudo-3D depth ===
     ctx.fillStyle=wc;ctx.fillRect(b.x,b.y,b.w,b.h);
-    // Roof (slightly inset, lighter shade)
+    // Left-side darker shading (simulates 3D wall depth)
+    const grad=ctx.createLinearGradient(b.x,0,b.x+b.w,0);
+    grad.addColorStop(0,'rgba(0,0,0,0.30)');grad.addColorStop(0.15,'rgba(0,0,0,0.08)');
+    grad.addColorStop(0.85,'rgba(0,0,0,0.04)');grad.addColorStop(1,'rgba(0,0,0,0.20)');
+    ctx.fillStyle=grad;ctx.fillRect(b.x,b.y,b.w,b.h);
+    // Top-side highlight
+    ctx.fillStyle='rgba(255,255,255,0.10)';ctx.fillRect(b.x,b.y,b.w,4);
+    // Roof (slightly inset, different shade)
     let rc=b.roof;
     if(drugT)rc='hsl('+((b.y*0.1+tt*15)%360)+',60%,30%)';
-    ctx.fillStyle=rc;ctx.fillRect(b.x+5,b.y+5,b.w-10,b.h-10);
-    // Outer wall border (gives 3D ledge look)
-    ctx.strokeStyle='rgba(0,0,0,0.45)';ctx.lineWidth=2;ctx.strokeRect(b.x,b.y,b.w,b.h);
-    ctx.strokeStyle='rgba(255,255,255,0.1)';ctx.lineWidth=1;
-    ctx.beginPath();ctx.moveTo(b.x,b.y+b.h);ctx.lineTo(b.x,b.y);ctx.lineTo(b.x+b.w,b.y);ctx.stroke();
+    ctx.fillStyle=rc;ctx.fillRect(b.x+6,b.y+6,b.w-12,b.h-12);
+    // Roof highlight
+    ctx.fillStyle='rgba(255,255,255,0.07)';ctx.fillRect(b.x+6,b.y+6,b.w-12,3);
+    // Outer wall border — thick dark outline gives building definition
+    ctx.strokeStyle='rgba(0,0,0,0.7)';ctx.lineWidth=2.5;ctx.strokeRect(b.x,b.y,b.w,b.h);
+    // Thin highlight on top-left edges
+    ctx.strokeStyle='rgba(255,255,255,0.18)';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(b.x+2,b.y+b.h-2);ctx.lineTo(b.x+2,b.y+2);ctx.lineTo(b.x+b.w-2,b.y+2);ctx.stroke();
+    // Floor divider lines (horizontal bands per floor)
+    ctx.strokeStyle='rgba(0,0,0,0.22)';ctx.lineWidth=1.5;
+    const flH=b.h/(b.floors||2);
+    for(let f=1;f<(b.floors||2);f++){
+      const fy=b.y+f*flH;
+      ctx.beginPath();ctx.moveTo(b.x+6,fy);ctx.lineTo(b.x+b.w-6,fy);ctx.stroke();
+      // Ledge detail on each floor
+      ctx.fillStyle='rgba(0,0,0,0.12)';ctx.fillRect(b.x+6,fy,b.w-12,2);
+    }
     // Windows
-    const wsz=b.sz||4;
+    const wsz=b.sz||5;
     for(let i=0;i<b.wsX.length;i++){
-      if(b.wsX[i]<b.x+3||b.wsX[i]+wsz>b.x+b.w-3)continue;
-      if(b.wsY[i]<b.y+3||b.wsY[i]+wsz>b.y+b.h-3)continue;
+      if(b.wsX[i]<b.x+5||b.wsX[i]+wsz>b.x+b.w-5)continue;
+      if(b.wsY[i]<b.y+5||b.wsY[i]+wsz>b.y+b.h-5)continue;
       const lit=b.winW[i]^((G.time/5000|0)+(i%7===0)?1:0);
       if(drugT)ctx.fillStyle='hsl('+((b.wsX[i]*0.3+tt*30)%360)+',100%,60%)';
-      else if(b.special==='club')ctx.fillStyle=Math.sin(tt*6+i)>0?'rgba(255,100,200,0.9)':'rgba(100,50,255,0.9)';
-      else ctx.fillStyle=lit?'rgba(255,240,160,0.9)':'rgba(0,10,40,0.85)';
+      else if(b.special==='club'||b.special==='milbarracks'&&false){
+        const h=(b.wsX[i]*1.2+b.wsY[i]*0.8+tt*60)%360;
+        ctx.fillStyle=Math.sin(tt*5+i*0.7)>0?'rgba(255,60,200,0.9)':'rgba(80,40,255,0.9)';
+      }
+      else ctx.fillStyle=lit?'rgba(255,244,180,0.95)':'rgba(10,20,60,0.88)';
       ctx.fillRect(b.wsX[i],b.wsY[i],wsz,wsz);
-      // Window frame
-      if(!drugT){ctx.strokeStyle='rgba(0,0,0,0.4)';ctx.lineWidth=0.5;ctx.strokeRect(b.wsX[i],b.wsY[i],wsz,wsz);}
+      // Window sill
+      ctx.fillStyle='rgba(0,0,0,0.35)';ctx.fillRect(b.wsX[i]-1,b.wsY[i]+wsz,wsz+2,2);
+      // Window frame lines
+      if(!drugT){ctx.strokeStyle='rgba(0,0,0,0.5)';ctx.lineWidth=0.8;ctx.strokeRect(b.wsX[i]-0.5,b.wsY[i]-0.5,wsz+1,wsz+1);}
     }
-    // Floor divider lines
-    ctx.strokeStyle='rgba(0,0,0,0.18)';ctx.lineWidth=1;
-    const flH=b.h/(b.floors||2);
-    for(let f=1;f<(b.floors||2);f++){ctx.beginPath();ctx.moveTo(b.x+5,b.y+f*flH);ctx.lineTo(b.x+b.w-5,b.y+f*flH);ctx.stroke();}
-    // === ENTRANCE DOOR (south face) ===
-    if(b.special!=='airport'&&b.special!=='hangar'){
-      const dW=14,dH=12;
+    // === ENTRANCE DOOR (south face, centered) ===
+    if(b.special!=='airport'&&b.special!=='airport2'&&b.special!=='hangar'&&b.special!=='milhangar'&&b.special!=='milbarracks'&&b.special!=='milstore'){
+      const dW=16,dH=14;
       const dX=b.x+b.w/2-dW/2,dY=b.y+b.h-dH;
-      // Steps/walkway
-      ctx.fillStyle='rgba(200,190,170,0.6)';
-      ctx.fillRect(dX-6,dY+dH,dW+12,6);
-      ctx.fillRect(dX-4,dY+dH+3,dW+8,4);
-      // Door frame
-      ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(dX-2,dY-2,dW+4,dH+2);
-      // Door
-      const doorCol=b.special==='garage'?'#8B5A00':b.special==='club'?'#6B2FA0':b.special==='drugden'?'#1a1a1a':b.special==='gunshop'?'#5a3010':'#5a3a20';
+      // Stairs / entry steps
+      ctx.fillStyle='rgba(180,170,150,0.65)';ctx.fillRect(dX-8,dY+dH,dW+16,5);
+      ctx.fillStyle='rgba(160,150,130,0.55)';ctx.fillRect(dX-6,dY+dH+3,dW+12,4);
+      // Door arch/frame
+      ctx.fillStyle='rgba(0,0,0,0.75)';ctx.fillRect(dX-2,dY-2,dW+4,dH+2);
+      // Door body
+      const doorCol=b.special==='garage'?'#6B4C00':b.special==='club'?'#5A1090':b.special==='drugden'?'#0A0808':b.special==='gunshop'?'#4a2208':'#4a3218';
       ctx.fillStyle=doorCol;ctx.fillRect(dX,dY,dW,dH);
-      // Door panel detail
-      ctx.fillStyle='rgba(255,255,255,0.12)';ctx.fillRect(dX+2,dY+2,dW/2-3,dH-4);ctx.fillRect(dX+dW/2+1,dY+2,dW/2-3,dH-4);
+      // Door panel insets
+      ctx.fillStyle='rgba(255,255,255,0.10)';ctx.fillRect(dX+2,dY+2,dW/2-3,dH-5);ctx.fillRect(dX+dW/2+1,dY+2,dW/2-3,dH-5);
+      ctx.fillStyle='rgba(255,255,255,0.08)';ctx.fillRect(dX+2,dY+dH*0.55,dW-4,dH*0.35);
       // Doorknob
-      ctx.fillStyle='#FFD700';ctx.beginPath();ctx.arc(dX+dW-4,dY+dH/2,1.5,0,Math.PI*2);ctx.fill();
-      // Above-door sign for special buildings
+      ctx.fillStyle='#D4AF37';ctx.beginPath();ctx.arc(dX+dW-5,dY+dH/2,1.8,0,Math.PI*2);ctx.fill();
+      // Illuminated sign above door for special buildings
       if(b.special){
-        const signColors={garage:'#00FF41',club:'#FC8181',drugden:'#e040fb',gunshop:'#F6AD55'};
-        ctx.fillStyle=signColors[b.special]||'#FFD700';
-        ctx.fillRect(dX-8,dY-10,dW+16,9);
-        ctx.fillStyle='#000';ctx.font='bold 6px Courier New';ctx.textAlign='center';
-        const sn={garage:'GARAGE',club:'CLUB',drugden:'DEN',gunshop:'GUNS'};
-        ctx.fillText(sn[b.special]||'',dX+dW/2,dY-3);
+        const signBg={garage:'#1C6B38',club:Math.sin(tt*4)>0?'#44237A':'#6633A0',drugden:'#0D0A10',gunshop:'#7A3A10',milhangar:'#3a4a20',milbarracks:'#3a4a20',milstore:'#3a4a20'}[b.special]||'#222';
+        const signTxt={garage:'GARAGE',club:'NEON CLUB',drugden:'DRUG DEN',gunshop:'AMMU-NATION',airport:'AIRPORT',airport2:'AIRPORT',milhangar:'HANGAR',milbarracks:'BARRACKS',milstore:'ARMORY'}[b.special]||'';
+        const signCol={garage:'#00FF41',club:'#FF88FF',drugden:'#e040fb',gunshop:'#F6AD55'}[b.special]||'#aaa';
+        if(signTxt){
+          ctx.fillStyle=signBg;ctx.fillRect(dX-12,dY-13,dW+24,12);
+          ctx.strokeStyle='rgba(0,0,0,0.5)';ctx.lineWidth=1;ctx.strokeRect(dX-12,dY-13,dW+24,12);
+          ctx.fillStyle=signCol;ctx.font='bold 7px Courier New';ctx.textAlign='center';
+          ctx.fillText(signTxt,dX+dW/2,dY-4);
+          // Glow for neon signs
+          if(b.special==='club'||b.special==='drugden'){
+            ctx.shadowColor=signCol;ctx.shadowBlur=4;
+            ctx.fillText(signTxt,dX+dW/2,dY-4);
+            ctx.shadowBlur=0;
+          }
+        }
       }
     }
-    // Special labels
-    if(b.special){
-      const labels={garage:'🔧 GARAGE',club:'🎵 NEON CLUB',drugden:'💊 DRUG DEN',gunshop:'🔫 AMMU-NATION',airport:'✈️ AIRPORT',hangar:'🚁 HANGAR'};
-      const lbl=labels[b.special];
-      if(lbl&&b.x-G.camera.x>-100&&b.x-G.camera.x<canvas.width+100){
-        ctx.font='bold 11px Courier New';ctx.textAlign='center';
-        ctx.fillStyle=b.special==='garage'?'#00FF41':b.special==='club'?'#FC8181':b.special==='drugden'?'#e040fb':b.special==='gunshop'?'#F6AD55':'#FFD700';
-        ctx.fillText(lbl,b.x+b.w/2,b.y+b.h/2+6);
-      }
+    // Rooftop details: HVAC unit, water tower on some buildings
+    if(!b.special&&b.floors>=4&&(b.x+b.y)%3===0){
+      const rx=b.x+b.w*0.6,ry=b.y+8;
+      ctx.fillStyle='#888';ctx.fillRect(rx,ry,10,8);ctx.fillRect(rx+2,ry-4,6,5);
+      ctx.fillStyle='rgba(0,0,0,0.3)';ctx.fillRect(rx,ry,10,2);
     }
   }
 }
@@ -1327,12 +1875,27 @@ function render(){
     return sx2>-100&&sx2<canvas.width+100&&sy2>-100&&sy2<canvas.height+100;
   }).sort((a,b)=>a.y-b.y);
 
+  // Draw mission waypoint marker in world
+  if(G.mission&&G.mission.state==='active'){
+    let wx=null,wy=null;
+    if(G.mission.type==='goto'||G.mission.type==='visit'){{wx=G.mission.targetTile?G.mission.targetTile.x*TS:null;wy=G.mission.targetTile?G.mission.targetTile.y*TS:null;}}
+    else if(G.mission.type==='steal_vehicle'&&G.player.inCar&&G.player.inCar.vtype===G.mission.vtype&&G.mission.deliverTile){wx=G.mission.deliverTile.x*TS;wy=G.mission.deliverTile.y*TS;}
+    if(wx!==null){
+      const sx=wx-G.camera.x,sy=wy-G.camera.y;
+      const pulse=0.6+Math.sin(G.time*0.005)*0.4;
+      ctx.fillStyle='rgba(255,200,0,'+pulse+')';
+      ctx.beginPath();ctx.arc(sx,sy,14,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='rgba(0,0,0,0.7)';ctx.font='bold 12px Arial';ctx.textAlign='center';ctx.fillText('★',sx,sy+4);
+    }
+  }
   for(const e of vis){
     if(e instanceof Vehicle)drawCar(e);
+    else if(e instanceof Rocket)drawRocket(e);
     else if(e instanceof Bullet)drawBullet(e);
     else if(e instanceof Pickup)drawPickup(e);
     else if(e instanceof Ped)drawPed(e);
     else if(e instanceof CopOfficer)drawCop(e);
+    else if(e instanceof MilSoldier)drawMilSoldier(e);
   }
   if(G.player.alive&&!G.player.inCar)drawPlayer();
 
@@ -1546,19 +2109,37 @@ function drawMinimap(){
   const sc=sz/(MW*TS);
   for(let y=0;y<MH;y+=2)for(let x=0;x<MW;x+=2){
     const t=map[y][x];
-    mmx.fillStyle=t===T_ROAD?'#555':t===T_BUILD?'#2a2a2a':t===T_WATER||t===T_OCEAN?'#1a4080':t===T_BEACH?'#8B7340':t===T_RUNWAY?'#666':t===T_PARK?'#1a4a15':'#2a3a22';
+    mmx.fillStyle=t===T_ROAD?'#555':t===T_BUILD?'#2a2a2a':t===T_WATER||t===T_OCEAN?'#1a4080':t===T_BEACH?'#8B7340':t===T_RUNWAY?'#888':t===T_PARK?'#1a4a15':t===T_MIL?'#3a4a20':'#2a3a22';
     mmx.fillRect(x*TS*sc,y*TS*sc,2,2);
   }
+  // Military base outline on minimap
+  mmx.strokeStyle='rgba(80,180,40,0.7)';mmx.lineWidth=1;
+  mmx.strokeRect(MIL.x1*TS*sc,MIL.y1*TS*sc,(MIL.x2-MIL.x1)*TS*sc,(MIL.y2-MIL.y1)*TS*sc);
+  // City dividers
+  mmx.strokeStyle='rgba(255,200,0,0.25)';mmx.lineWidth=0.5;
+  mmx.beginPath();mmx.moveTo(CITY1_X2*TS*sc,0);mmx.lineTo(CITY1_X2*TS*sc,sz);mmx.stroke();
+  mmx.beginPath();mmx.moveTo(CITY2_X1*TS*sc,0);mmx.lineTo(CITY2_X1*TS*sc,sz);mmx.stroke();
   // Special locs on minimap
   for(const loc of SPECIAL_LOCS){
-    const col={garage:'#00FF41',nightclub:'#FC8181',drugden:'#e040fb',gunshop:'#F6AD55',boatdock:'#3182CE',helipad:'#FFD700',airstrip:'#fff'}[loc.type]||'#aaa';
+    if(loc.type==='mission_giver')continue;
+    const col={garage:'#00FF41',nightclub:'#FC8181',drugden:'#e040fb',gunshop:'#F6AD55',boatdock:'#3182CE',helipad:'#FFD700',airstrip:'#fff',milairstrip:'#8f8',milbase:'#4a6'}[loc.type]||'#aaa';
     mmx.fillStyle=col;mmx.fillRect(loc.x*sc,loc.y*sc,4,4);
+  }
+  // Mission waypoint on minimap
+  if(G.mission&&G.mission.state==='active'){
+    let wx=null,wy=null;
+    if(G.mission.type==='goto'&&G.mission.targetTile){wx=G.mission.targetTile.x*TS;wy=G.mission.targetTile.y*TS;}
+    else if(G.mission.type==='steal_vehicle'&&G.player.inCar&&G.player.inCar.vtype===G.mission.vtype&&G.mission.deliverTile){wx=G.mission.deliverTile.x*TS;wy=G.mission.deliverTile.y*TS;}
+    if(wx!==null){const p=0.5+Math.sin(G.time*0.005)*0.5;mmx.fillStyle='rgba(255,220,0,'+p+')';mmx.beginPath();mmx.arc(wx*sc,wy*sc,4,0,Math.PI*2);mmx.fill();}
   }
   // Vehicles on minimap
   for(const e of G.entities){
     if(!e.alive)continue;
-    if(e instanceof Vehicle){mmx.fillStyle=e.isPol?'#4444ff':'#aaa';mmx.fillRect(e.x*sc-1,e.y*sc-1,3,3);}
-    else if(e instanceof Pickup){mmx.fillStyle='#FFD700';mmx.fillRect(e.x*sc-1,e.y*sc-1,2,2);}
+    if(e instanceof Vehicle){
+      mmx.fillStyle=e.vtype==='tank'||e.vtype==='f16'||e.vtype==='miljeep'?'#8f8':e.isPol?'#4444ff':'#aaa';
+      mmx.fillRect(e.x*sc-1,e.y*sc-1,3,3);
+    } else if(e instanceof Pickup){mmx.fillStyle='#FFD700';mmx.fillRect(e.x*sc-1,e.y*sc-1,2,2);}
+    else if(e instanceof MilSoldier){mmx.fillStyle='#6a8';mmx.fillRect(e.x*sc-1,e.y*sc-1,2,2);}
   }
   mmx.fillStyle='#ff3333';
   mmx.beginPath();mmx.arc(G.player.x*sc,G.player.y*sc,3,0,Math.PI*2);mmx.fill();
@@ -1578,43 +2159,79 @@ function loop(ts){
 // Initialization
 function init(){
   genMap();
-  const spawn=roadPts[0]||{x:640,y:640};
-  G.player=new Player(spawn.x,spawn.y);
-  // Initial vehicles
-  const vTypes=['car','car','car','car','van','van','truck','truck','bike','bike'];
-  for(let i=0;i<50;i++){
-    const rp=randRoad();const vt=vTypes[RI(0,vTypes.length-1)];
-    const v=new Vehicle(rp.x+R(-10,10),rp.y+R(-10,10),vt);
-    v.angle=R(0,Math.PI*2);G.entities.push(v);
+  // Spawn player at center of City 1 (Liberty City)
+  const cx=70*TS,cy=80*TS;
+  const spawnPt=city1RoadPts.length?
+    city1RoadPts.reduce((b,p)=>Math.hypot(p.x-cx,p.y-cy)<Math.hypot(b.x-cx,b.y-cy)?p:b,city1RoadPts[0]):
+    roadPts[Math.floor(roadPts.length/4)]||{x:2240,y:2560};
+  G.player=new Player(spawnPt.x,spawnPt.y);
+
+  // City 1 vehicles (regular)
+  const c1Types=['car','car','car','car','van','van','truck','truck','bike','bike'];
+  for(let i=0;i<45;i++){
+    const rp=randCity1Road();const vt=c1Types[RI(0,c1Types.length-1)];
+    const v=new Vehicle(rp.x+R(-10,10),rp.y+R(-10,10),vt);v.angle=R(0,Math.PI*2);G.entities.push(v);
   }
-  // NPC-driven cars (35)
+  // City 1 NPC-driven cars
+  for(let i=0;i<25;i++){
+    const rp=randCity1Road();const vt=c1Types[RI(0,c1Types.length-1)];
+    const v=new Vehicle(rp.x,rp.y,vt);v.isNpc=true;v.driver=v;v.npcTarget=randCity1Road();v.angle=R(0,Math.PI*2);G.entities.push(v);
+  }
+  // City 2 vehicles (more expensive, more dangerous)
+  const c2Types=['sports','sports','muscle','muscle','car','van','bike'];
   for(let i=0;i<35;i++){
-    const rp=randRoad();const vt=vTypes[RI(0,vTypes.length-1)];
-    const v=new Vehicle(rp.x,rp.y,vt);v.isNpc=true;v.driver=v;v.npcTarget=randRoad();v.angle=R(0,Math.PI*2);
-    G.entities.push(v);
+    const rp=randCity2Road();const vt=c2Types[RI(0,c2Types.length-1)];
+    const v=new Vehicle(rp.x+R(-10,10),rp.y+R(-10,10),vt);v.angle=R(0,Math.PI*2);G.entities.push(v);
   }
-  // Spawn a heli and plane at airport
+  // City 2 NPC-driven cars
+  for(let i=0;i<20;i++){
+    const rp=randCity2Road();const vt=c2Types[RI(0,c2Types.length-1)];
+    const v=new Vehicle(rp.x,rp.y,vt);v.isNpc=true;v.driver=v;v.npcTarget=randCity2Road();v.angle=R(0,Math.PI*2);G.entities.push(v);
+  }
+  // City 1 airport vehicles
   G.entities.push(Object.assign(new Vehicle(116*TS,38*TS,'heli'),{angle:0}));
-  G.entities.push(Object.assign(new Vehicle(106*TS,11*TS,'plane'),{angle:0}));
-  // Spawn boats at beach
-  for(let i=0;i<4;i++)G.entities.push(Object.assign(new Vehicle(22*TS+i*6*TS,143*TS,'boat'),{angle:0}));
-  // Pedestrians — spawn on sidewalks, fall back to road area if needed
-  for(let i=0;i<70;i++){
-    const pool=swPts.length>0?swPts:roadPts;
-    const rp=pool[RI(0,pool.length-1)];
-    const sx=rp.x+R(-8,8),sy=rp.y+R(-8,8);
-    G.entities.push(new Ped(sx,sy));
+  G.entities.push(Object.assign(new Vehicle((AP1.x1+8)*TS,(AP1.y1+3)*TS,'plane'),{angle:0}));
+  // City 2 airport vehicles
+  G.entities.push(Object.assign(new Vehicle(290*TS,45*TS,'heli'),{angle:0}));
+  G.entities.push(Object.assign(new Vehicle((AP2.x1+8)*TS,(AP2.y1+3)*TS,'plane'),{angle:0}));
+  // Military base — tanks, jeeps, F-16s parked
+  for(let i=0;i<3;i++)G.entities.push(Object.assign(new Vehicle((MIL.x1+6+i*12)*TS,(MIL.y1+18)*TS,'tank'),{angle:0}));
+  for(let i=0;i<4;i++)G.entities.push(Object.assign(new Vehicle((MIL.x1+4+i*8)*TS,(MIL.y1+28)*TS,'miljeep'),{angle:R(0,Math.PI*2)}));
+  for(let i=0;i<3;i++)G.entities.push(Object.assign(new Vehicle((MIL.x1+5+i*18)*TS,(MIL.y1+5)*TS,'f16'),{angle:0}));
+  // Military soldiers (initial)
+  for(let i=0;i<10;i++){
+    const sx=R(MIL.x1+4,MIL.x2-4)*TS,sy=R(MIL.y1+10,MIL.y2-4)*TS;
+    G.entities.push(new MilSoldier(sx,sy));
   }
-  // Pickups
-  for(let i=0;i<25;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'money',RI(50,250)));}
+  // Boats at beaches
+  for(let i=0;i<4;i++)G.entities.push(Object.assign(new Vehicle((22+i*6)*TS,(BEACH_Y-4)*TS,'boat'),{angle:0}));
+  for(let i=0;i<3;i++)G.entities.push(Object.assign(new Vehicle((200+i*6)*TS,(BEACH_Y-4)*TS,'boat'),{angle:0}));
+  // Pedestrians — city 1
+  for(let i=0;i<50;i++){
+    const pool=swPts.filter(p=>p.x<CITY1_X2*TS&&p.y<RURAL_Y*TS);
+    const rp=(pool.length?pool:swPts)[RI(0,(pool.length?pool:swPts).length-1)];
+    G.entities.push(new Ped(rp.x+R(-8,8),rp.y+R(-8,8)));
+  }
+  // Pedestrians — city 2 (more criminal types)
+  for(let i=0;i<40;i++){
+    const pool=swPts.filter(p=>p.x>=CITY2_X1*TS&&p.y<RURAL_Y*TS);
+    const rp=(pool.length?pool:swPts)[RI(0,(pool.length?pool:swPts).length-1)];
+    G.entities.push(new Ped(rp.x+R(-8,8),rp.y+R(-8,8)));
+  }
+  // Pickups — spread across both cities
+  for(let i=0;i<30;i++){const rp=randCity1Road();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'money',RI(50,300)));}
+  for(let i=0;i<20;i++){const rp=randCity2Road();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'money',RI(100,500)));}
   for(let i=0;i<20;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'health',25));}
-  for(let i=0;i<10;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'pistol',30));}
-  for(let i=0;i<5;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'shotgun',8));}
-  for(let i=0;i<5;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'uzi',40));}
-  for(let i=0;i<4;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x,rp.y,'armor',50));}
-  // Camera
-  G.camera.x=G.player.x-canvas.width/2;G.camera.y=G.player.y-canvas.height/2;
+  for(let i=0;i<12;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'pistol',30));}
+  for(let i=0;i<6;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'shotgun',8));}
+  for(let i=0;i<6;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'uzi',40));}
+  for(let i=0;i<5;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x,rp.y,'armor',50));}
+  // Camera centered on player
+  G.camera.x=clamp(G.player.x-canvas.width/2,0,MW*TS-canvas.width);
+  G.camera.y=clamp(G.player.y-canvas.height/2,0,MH*TS-canvas.height);
   G.player.updateHpBar();G.player.updateWeaponHUD();updateWantedBar();
+  // Start first mission automatically
+  setTimeout(()=>{startMission('m1');},2000);
   requestAnimationFrame(loop);
 }
 
