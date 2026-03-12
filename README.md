@@ -1,37 +1,44 @@
-# Great Escape Reimagined (Prototype)
+# Grand Theft Auto Mini
 
 ## ▶️ Play now: https://mysticalg.github.io/GrandTheftAutoMini/
 
 ## About
-Great Escape Reimagined is a lightweight, browser-based isometric prison-escape prototype inspired by classic routine-and-risk sandbox games. You play as a prisoner balancing daily routine, stealth, and progression while trying to gather everything needed for a successful escape.
+Grand Theft Auto Mini is a fast, browser-based open-world action sandbox inspired by classic GTA-style gameplay. Explore a large city, complete missions, drive and switch vehicles, evade wanted levels, and experiment with emergent chaos systems.
 
-The simulation blends structured prison schedules (roll call, work detail, lights out) with emergent moments from patrols, spotlights, and NPC movement.
+The game runs entirely in the browser with no build step required for players.
 
 ## Features
-- **Isometric prison map** with themed sections: sleeping quarters, mess hall, admin, solitude, yard, fences, and an exit gate.
-- **Living day/night cycle** with schedule phases: Roll Call, Work Detail, Mess Hall, Free Period, and Lights Out.
-- **Player movement + automation** with manual control and an auto-routine toggle.
-- **Guard patrol + capture loop** that punishes mistakes by sending you to solitude.
-- **Morale system** that rewards progress and drops under pressure.
-- **Collectible escape items** (e.g., tools/disguises/papers) needed before reaching the final gate.
-- **Tunnel hatch traversal** to move between key areas quickly.
-- **Ambient world activity** from roaming prisoners and nighttime spotlights.
-- **Retro UI + audio feedback** including badges, inventory, event log, and beep SFX.
+- **Large open city map** with roads, districts, interiors, and discoverable locations.
+- **Mission progression** with quick mission cycling and objective prompts.
+- **Vehicle gameplay** including cars plus specialty vehicle types (for example air/water/heavy variants in the world simulation).
+- **Combat + survival loop** with health, stamina-style pressure, police escalation, and respawn flow.
+- **Interactive HUD** with money, wanted status, health bar, notifications, and minimap.
+- **Minimap navigation tools** with wheel zoom and drag pan support.
+- **NPC and traffic systems** for a more dynamic city feel.
+- **Audio feedback** for combat, pickups, alerts, and other key actions.
 
 ## Instructions
 ### Objective
-1. Collect all required escape items.
-2. Reach the exit gate to complete the escape.
+- Explore the city, complete missions, build your score/cash, and survive escalating encounters.
 
 ### Controls
-- **Move:** `WASD` or Arrow Keys
-- **Toggle auto-routine:** `A`
-- **Use tunnel hatch (when standing on one):** `E`
+- **Move / drive:** `WASD`
+- **Sprint:** `SHIFT`
+- **Attack:** `SPACE`
+- **Interact:** `F`
+- **Enter/exit vehicle or interiors:** `E`
+- **Next mission:** `N`
+- **Open full world map:** `M`
+- **Zoom/adjust minimap detail:** `Q` / `Z`
+- **Minimap controls:** Mouse wheel to zoom, drag to pan
+- **Repair vehicle:** `G`
+- **Use drug/boost action:** `H`
+- **Respawn:** `R`
 
 ### Gameplay tips
-- During **Lights Out**, avoid spotlight sweeps to protect morale.
-- If a guard catches you, you are moved to solitude and lose morale.
-- Auto-routine can help you stay aligned with schedule windows before making your escape attempt.
+- Use the minimap aggressively: zoom out while traveling, zoom in during combat-heavy blocks.
+- Entering different vehicles can dramatically change escape and mission options.
+- If wanted pressure ramps up, break line-of-sight and reroute through denser streets.
 
 ## Run locally
 Open `index.html` directly, or serve the folder with:
