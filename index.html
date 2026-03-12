@@ -225,11 +225,13 @@ function npcShouldStopAtLight(v,lane){
     const st=trafficLightState(light,G.time);
     if(axis==='ew'){
       const along=(light.x-v.x)*dirX,lateral=Math.abs(light.y-v.y);
-      if(along<0||along>220||lateral>22)continue;
+      // Slightly wider lateral cone keeps lane-following NPCs from missing lights
+      // when they are correcting back from the curb/pavement.
+      if(along<0||along>240||lateral>30)continue;
       if(along<bestDist){bestDist=along;best=light;bestState=st.ew;}
     }else{
       const along=(light.y-v.y)*dirY,lateral=Math.abs(light.x-v.x);
-      if(along<0||along>220||lateral>22)continue;
+      if(along<0||along>240||lateral>30)continue;
       if(along<bestDist){bestDist=along;best=light;bestState=st.ns;}
     }
   }
@@ -237,8 +239,14 @@ function npcShouldStopAtLight(v,lane){
   const brakeDecel=Math.max(0.06,v.acc*1.6);
   const speed=Math.abs(v.spd);
   const stopDist=(speed*speed)/(2*brakeDecel)+v.w*0.8+8;
-  const shouldStop=bestState==='stop'||(bestState==='caution'&&bestDist>Math.max(18,stopDist*0.72));
+  // Heavier vehicles (van/truck) should commit to stopping earlier.
+  const shouldStop=bestState==='stop'||(bestState==='caution'&&bestDist>Math.max(14,stopDist*0.55));
   return{shouldStop,dist:bestDist,state:bestState,stopDist};
+}
+
+function laneCenterOffset(v,lane){
+  if(!lane)return 0;
+  return lane.axis==='ew'?(lane.y-v.y):(lane.x-v.x);
 }
 function addExplosion(x,y){
   for(let i=0;i<55;i++){const a=R(0,Math.PI*2),s=R(1.5,6);G.particles.push(new Particle(x,y,Math.cos(a)*s,Math.sin(a)*s,i<35?'hsl('+(RI(0,40))+',100%,'+(RI(45,65))+'%)':'#888',R(400,900),R(3,9)));}
@@ -706,7 +714,7 @@ class Vehicle extends Entity{
     const dx=target.x-this.x,dy=target.y-this.y;
     let ang=Math.atan2(dy,dx),diff=ang-this.angle;
     while(diff>Math.PI)diff-=Math.PI*2;while(diff<-Math.PI)diff+=Math.PI*2;
-    const steerLimit=this.trn*(lane?0.72:0.9);
+    const steerLimit=this.trn*(lane?0.62:0.9);
     if(Math.abs(diff)>0.02)this.angle+=Math.sign(diff)*Math.min(steerLimit,Math.abs(diff));
 
     // Respect vehicle handling limits: heavy/slow vehicles should brake earlier.
@@ -719,7 +727,15 @@ class Vehicle extends Entity{
       return;
     }
 
-    this.spd=Math.min(this.spd+this.acc*0.38,this.mxS*(lane?0.58:0.52));
+    // Cornering + lane correction speed model: slow down before sharp turns and while
+    // recovering from lane drift so cars stop climbing onto pavement.
+    const cornerSlow=Math.min(1,Math.abs(diff)/(Math.PI*0.5));
+    const laneErr=Math.min(1,Math.abs(laneCenterOffset(this,lane))/(TS*0.7));
+    const laneCruise=lane?0.64:0.56;
+    const safeSpeedMult=clamp(laneCruise-cornerSlow*0.28-laneErr*0.22,0.22,0.75);
+    const targetCruise=this.mxS*safeSpeedMult;
+    if(this.spd>targetCruise)this.spd=Math.max(targetCruise,this.spd-Math.max(0.05,this.acc*0.8));
+    else this.spd=Math.min(targetCruise,this.spd+this.acc*0.35);
     if(Math.hypot(dx,dy)<34)this.npcTarget=randRoad();
 
     // Avoid player when police heat is high.
@@ -738,7 +754,7 @@ class Vehicle extends Entity{
     if(d>80)this.spd=Math.min(this.spd+this.acc,this.mxS);else this.spd*=0.88;
     if(G.player.inCar&&dst(this,G.player.inCar)<40)G.player.inCar.hit(9,this);
     if(!G.player.inCar&&dst(this,G.player)<22)G.player.hit(7,this);
-    this.sirenT-=dt;if(this.sirenT<=0){this.sirenT=700;sound('siren');}
+    // Siren pulse is handled on wanted level increase to avoid repetitive audio spam.
   }
   hit(dmg,src){this.smokeDmg+=dmg;this.hp-=dmg;if(this.hp<=0)this.explode();}
   explode(){
@@ -1133,9 +1149,12 @@ function syncWantedFromScore(){
   let lvl=0;
   for(const t of thresholds)if(G.wantedScore>=t)lvl++;
   if(lvl!==G.wanted){
+    const prevLevel=G.wanted;
     G.wanted=lvl;
     updateWantedBar();
     if(lvl>0&&lvl<=2)notify('Police are watching you...',1200);
+    // Play siren once when wanted level increases.
+    if(lvl>prevLevel)sound('siren');
   }
 }
 function addWanted(points,cooldownMs=0){
@@ -1324,15 +1343,15 @@ function update(dt){
     document.getElementById('drug-fill').style.width=(pct*100)+'%';
     if(G.drug.timer<=0){G.drug={type:null,timer:0,maxTimer:0};document.getElementById('drug-bar').style.display='none';notify('Drug wore off.',1500);}
   }
-  // Wanted cooldown + score decay (slower escalation, steadier cooldown).
+  // Wanted cooldown + score decay tuned for faster clear-down after evasion.
   if(G.wantedCooldownT>0)G.wantedCooldownT=Math.max(0,G.wantedCooldownT-dt);
   if(G.wantedScore>0){
     G.wantedDecayT+=dt;
-    const decayTick=350;
+    const decayTick=260;
     if(G.wantedDecayT>=decayTick){
       const steps=(G.wantedDecayT/decayTick)|0;
       G.wantedDecayT-=steps*decayTick;
-      const decayPerStep=0.07+G.wanted*0.045;
+      const decayPerStep=0.14+G.wanted*0.075;
       G.wantedScore=Math.max(0,G.wantedScore-steps*decayPerStep);
       const prevWanted=G.wanted;
       syncWantedFromScore();
@@ -1646,10 +1665,22 @@ function drawRocket(r){
 
 // Vehicle rendering
 function drawCar(car){
-  ctx.save();ctx.translate(car.x,car.y);ctx.rotate(car.angle);
+  ctx.save();ctx.translate(car.x,car.y);
   const w=car.w,h=car.h,vt=car.vtype;
+  // Road-vehicle sprites face opposite the movement vector in this art set,
+  // so rotate them by 180° to keep visual heading consistent with physics.
+  const needsRoadFlip=!car.flies&&vt!=='boat';
+  ctx.rotate(car.angle+(needsRoadFlip?Math.PI:0));
   // Shadow
-  ctx.fillStyle='rgba(0,0,0,0.3)';ctx.fillRect(-w/2+3,-h/2+3,w,h);
+  if(vt==='heli'||vt==='polheli'){
+    ctx.fillStyle='rgba(0,0,0,0.22)';
+    ctx.beginPath();ctx.ellipse(5,4,w*0.34,h*0.22,0,0,Math.PI*2);ctx.fill();
+  } else if(vt==='plane'||vt==='f16') {
+    ctx.fillStyle='rgba(0,0,0,0.18)';
+    ctx.beginPath();ctx.ellipse(5,4,w*0.42,h*0.18,0,0,Math.PI*2);ctx.fill();
+  } else {
+    ctx.fillStyle='rgba(0,0,0,0.3)';ctx.fillRect(-w/2+3,-h/2+3,w,h);
+  }
   // Body
   ctx.fillStyle=car.col;ctx.fillRect(-w/2,-h/2,w,h);
   ctx.fillStyle='rgba(255,255,255,0.1)';ctx.fillRect(-w/2,-h/2,w,h/3);
@@ -2003,12 +2034,22 @@ function drawTrafficLights(){
     const sx=light.x-G.camera.x,sy=light.y-G.camera.y;
     if(sx<-80||sy<-80||sx>canvas.width+80||sy>canvas.height+80)continue;
     const st=trafficLightState(light,G.time);
-    // North-South head
-    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(light.x-20,light.y-26,8,18);
-    ctx.fillStyle=st.ns==='go'?'#22c55e':st.ns==='caution'?'#facc15':'#ef4444';ctx.beginPath();ctx.arc(light.x-16,light.y-17,3,0,Math.PI*2);ctx.fill();
-    // East-West head
-    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(light.x+12,light.y+8,8,18);
-    ctx.fillStyle=st.ew==='go'?'#22c55e':st.ew==='caution'?'#facc15':'#ef4444';ctx.beginPath();ctx.arc(light.x+16,light.y+17,3,0,Math.PI*2);ctx.fill();
+    // American-style corner poles + overhang arms, with signal heads facing travel lanes.
+    const corners=[
+      {x:light.x-TS*0.78,y:light.y-TS*0.78,armX:18,armY:0,state:st.ew},
+      {x:light.x+TS*0.78,y:light.y-TS*0.78,armX:0,armY:18,state:st.ns},
+      {x:light.x+TS*0.78,y:light.y+TS*0.78,armX:-18,armY:0,state:st.ew},
+      {x:light.x-TS*0.78,y:light.y+TS*0.78,armX:0,armY:-18,state:st.ns}
+    ];
+    for(const c of corners){
+      ctx.fillStyle='rgba(28,33,42,0.9)';
+      ctx.fillRect(c.x-2,c.y-18,4,18);
+      ctx.fillRect(c.x,c.y-18,c.armX,c.armY);
+      const hx=c.x+c.armX,hy=c.y-18+c.armY;
+      ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(hx-4,hy-10,8,14);
+      ctx.fillStyle=c.state==='go'?'#22c55e':c.state==='caution'?'#facc15':'#ef4444';
+      ctx.beginPath();ctx.arc(hx,hy-3,2.5,0,Math.PI*2);ctx.fill();
+    }
   }
 }
 
