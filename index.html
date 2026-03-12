@@ -646,7 +646,7 @@ class Ped extends Entity{
   hit(dmg,src){
     this.hp-=dmg;
     for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#e53e3e',300,3));
-    if(this.hp<=0){const m=RI(10,120);addMoney(m);notify('+$'+m);this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){G.kills++;G.wanted=Math.min(5,G.wanted+2);G.wantedT=0;if(G.mission&&G.mission.type==='kill'){const inC2=this.x>CITY2_X1*TS;const inC1=this.x<CITY1_X2*TS;if(G.mission.area==='city2'&&inC2){G.mission.progress++;checkMission();}else if(G.mission.area==='city1'&&inC1){G.mission.progress++;checkMission();}else if(!G.mission.area){G.mission.progress++;checkMission();}}updateMissionObj();}}
+    if(this.hp<=0){const m=RI(10,120);addMoney(m);notify('+$'+m);this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){G.kills++;addWanted(10,200);if(G.mission&&G.mission.type==='kill'){const inC2=this.x>CITY2_X1*TS;const inC1=this.x<CITY1_X2*TS;if(G.mission.area==='city2'&&inC2){G.mission.progress++;checkMission();}else if(G.mission.area==='city1'&&inC1){G.mission.progress++;checkMission();}else if(!G.mission.area){G.mission.progress++;checkMission();}}updateMissionObj();}}
   }
 }
 
@@ -676,7 +676,7 @@ class CopOfficer extends Entity{
   hit(dmg,src){
     this.hp-=dmg;this.stun=200;
     for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#4444ff',300,3));
-    if(this.hp<=0){this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){G.wanted=Math.min(5,G.wanted+3);G.wantedT=0;}}
+    if(this.hp<=0){this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){addWanted(18,200);}}
   }
 }
 
@@ -725,7 +725,7 @@ class MilSoldier extends Entity{
       this.alive=false;
       addMoney(RI(50,200));
       if(src===G.player||src instanceof Bullet&&src.owner===G.player){
-        G.kills++;G.wanted=Math.min(5,G.wanted+2);G.wantedT=0;
+        G.kills++;addWanted(10,200);
         if(G.mission&&G.mission.type==='kill'&&G.mission.area==='milbase'){G.mission.progress++;checkMission();}
       }
     }
@@ -771,13 +771,13 @@ class Player extends Entity{
         G.entities.push(new Rocket(car.x,car.y,car.angle,car));
         G.entities.push(new Rocket(car.x+Math.cos(car.angle+Math.PI/2)*8,car.y+Math.sin(car.angle+Math.PI/2)*8,car.angle,car));
         G.particles.push(new Particle(car.x,car.y,R(-1,1),R(-1,1),'rgba(255,150,30,0.9)',200,8));
-        G.wanted=Math.min(5,G.wanted+1);G.wantedT=0;
+        addWanted(4,120);
       } else if(car.vtype==='tank'){
         if(this.atkT>0)return;
         this.atkT=2200;sound('cannon');
         G.entities.push(new Rocket(car.x+Math.cos(car.angle)*30,car.y+Math.sin(car.angle)*30,car.angle,car));
         addExplosion(car.x+Math.cos(car.angle)*28,car.y+Math.sin(car.angle)*28,0.4);
-        G.wanted=Math.min(5,G.wanted+1);G.wantedT=0;
+        addWanted(4,120);
       }
       return;
     }
@@ -785,29 +785,32 @@ class Player extends Entity{
     const w=this.weapon;
     if(w==='fists'){
       this.punchT=250;this.atkT=500;sound('punch');
+      let hitPed=false,hitCop=false;
       for(const e of G.entities){
-        if(e instanceof Ped&&dst(this,e)<42){e.hit(15+(G.drug&&G.drug.type==='power'?30:0),this);G.wanted=Math.min(5,G.wanted+1);G.wantedT=0;}
-        if(e instanceof CopOfficer&&dst(this,e)<42){e.hit(20+(G.drug&&G.drug.type==='power'?40:0),this);G.wanted=Math.min(5,G.wanted+1);G.wantedT=0;}
+        if(e instanceof Ped&&dst(this,e)<42){e.hit(15+(G.drug&&G.drug.type==='power'?30:0),this);hitPed=true;}
+        if(e instanceof CopOfficer&&dst(this,e)<42){e.hit(20+(G.drug&&G.drug.type==='power'?40:0),this);hitCop=true;}
         if(e instanceof Vehicle&&dst(this,e)<42){e.hit(5,this);}
       }
+      if(hitPed)addWanted(2,850);
+      if(hitCop)addWanted(8,300);
     } else if(w==='pistol'&&this.ammo.pistol>0){
       this.ammo.pistol--;this.atkT=280;sound('shoot');
       const dmg=25*(G.drug&&G.drug.type==='power'?3:1);
       G.entities.push(new Bullet(this.x,this.y,this.angle+R(-0.04,0.04),dmg,this));
-      G.wanted=Math.min(5,G.wanted+1);G.wantedT=0;
+      addWanted(4,120);
       G.particles.push(new Particle(this.x+Math.cos(this.angle)*16,this.y+Math.sin(this.angle)*16,0,0,'#ffff00',120,5));
       if(this.ammo.pistol===0&&this.weapon==='pistol')this.weapon='fists';
     } else if(w==='shotgun'&&this.ammo.shotgun>0){
       this.ammo.shotgun--;this.atkT=650;sound('shoot');
       const dmg=35*(G.drug&&G.drug.type==='power'?3:1);
       for(let i=-2;i<=2;i++)G.entities.push(new Bullet(this.x,this.y,this.angle+i*0.12,dmg,this));
-      G.wanted=Math.min(5,G.wanted+1);G.wantedT=0;
+      addWanted(4,120);
       if(this.ammo.shotgun===0)this.weapon='fists';
     } else if(w==='uzi'&&this.ammo.uzi>0){
       this.ammo.uzi--;this.atkT=110;sound('shoot');
       const dmg=18*(G.drug&&G.drug.type==='power'?3:1);
       G.entities.push(new Bullet(this.x,this.y,this.angle+R(-0.1,0.1),dmg,this));
-      G.wanted=Math.min(5,G.wanted+1);G.wantedT=0;
+      addWanted(4,120);
       if(this.ammo.uzi===0)this.weapon='fists';
     }
     this.updateWeaponHUD();
@@ -907,7 +910,7 @@ function showZoneLabel(txt){
 // Game state
 const G={
   player:null,entities:[],particles:[],
-  money:0,wanted:0,wantedT:0,wantedDecayT:0,
+  money:0,wanted:0,wantedScore:0,wantedT:0,wantedDecayT:0,wantedCooldownT:0,
   time:0,kills:0,score:0,godMode:false,
   camera:{x:0,y:0},shake:0,
   drug:{type:null,timer:0,maxTimer:0},
@@ -934,7 +937,7 @@ const G={
     const cx=70*TS,cy=80*TS;
     let spawnPt=city1RoadPts.length?city1RoadPts.reduce((b,p)=>Math.hypot(p.x-cx,p.y-cy)<Math.hypot(b.x-cx,b.y-cy)?p:b,city1RoadPts[0]):roadPts[Math.floor(roadPts.length/4)]||{x:2240,y:2560};
     G.player=new Player(spawnPt.x,spawnPt.y);
-    G.player.alive=true;G.wanted=0;G.drug={type:null,timer:0,maxTimer:0};
+    G.player.alive=true;G.wanted=0;G.wantedScore=0;G.wantedCooldownT=0;G.drug={type:null,timer:0,maxTimer:0};
     document.getElementById('drug-bar').style.display='none';
     G.player.updateHpBar();G.player.updateWeaponHUD();
     updateWantedBar();
@@ -943,6 +946,25 @@ const G={
 function updateWantedBar(){
   const wb=document.getElementById('wanted-bar');
   wb.innerHTML='';for(let i=0;i<5;i++){const s=document.createElement('span');s.textContent='★';s.style.cssText='font-size:20px;margin-right:2px;text-shadow:1px 1px #000;';s.style.color=i<G.wanted?'#FFD700':'#333';wb.appendChild(s);}
+}
+function syncWantedFromScore(){
+  // Gentler escalation curve: petty actions raise suspicion first, stars come with repeated offenses.
+  const thresholds=[10,22,38,58,82];
+  let lvl=0;
+  for(const t of thresholds)if(G.wantedScore>=t)lvl++;
+  if(lvl!==G.wanted){
+    G.wanted=lvl;
+    updateWantedBar();
+    if(lvl>0&&lvl<=2)notify('Police are watching you...',1200);
+  }
+}
+function addWanted(points,cooldownMs=0){
+  // Cooldown prevents one punch/swing from instantly chaining multiple wanted-level increases.
+  if(cooldownMs>0&&G.wantedCooldownT>0)return;
+  G.wantedScore=clamp(G.wantedScore+points,0,120);
+  if(cooldownMs>0)G.wantedCooldownT=cooldownMs;
+  G.wantedT=0;
+  syncWantedFromScore();
 }
 function getNearbyLoc(){
   const px=G.player.x,py=G.player.y;
@@ -1004,7 +1026,7 @@ function interactLoc(loc,key){
     if(key==='f'){
       const f16=new Vehicle((MIL.x1+8)*TS,(MIL.y1+5)*TS,'f16');f16.angle=0;
       G.entities.push(f16);notify('F-16 ready! SPACE to fire rockets. Build speed to take off!',3000);
-      G.wanted=Math.min(5,G.wanted+3);updateWantedBar();
+      addWanted(24);
     }
   } else if(loc.type==='mission_giver'){
     if(key==='f'){
@@ -1122,29 +1144,39 @@ function update(dt){
     document.getElementById('drug-fill').style.width=(pct*100)+'%';
     if(G.drug.timer<=0){G.drug={type:null,timer:0,maxTimer:0};document.getElementById('drug-bar').style.display='none';notify('Drug wore off.',1500);}
   }
-  // Wanted decay
-  if(G.wanted>0){
+  // Wanted cooldown + score decay (slower escalation, steadier cooldown).
+  if(G.wantedCooldownT>0)G.wantedCooldownT=Math.max(0,G.wantedCooldownT-dt);
+  if(G.wantedScore>0){
     G.wantedDecayT+=dt;
-    const threshold=10000+(G.wanted*2000);
-    if(G.wantedDecayT>threshold){G.wanted--;G.wantedDecayT=0;updateWantedBar();if(G.wanted===0)notify('Wanted level cleared',2000);}
+    const decayTick=350;
+    if(G.wantedDecayT>=decayTick){
+      const steps=(G.wantedDecayT/decayTick)|0;
+      G.wantedDecayT-=steps*decayTick;
+      const decayPerStep=0.07+G.wanted*0.045;
+      G.wantedScore=Math.max(0,G.wantedScore-steps*decayPerStep);
+      const prevWanted=G.wanted;
+      syncWantedFromScore();
+      if(prevWanted>0&&G.wanted===0)notify('Wanted level cleared',2000);
+    }
   } else G.wantedDecayT=0;
-  // Spawn police
+  // Spawn police (low wanted levels respond slower and with fewer units).
   if(G.wanted>0){
     G.wantedSpawnT-=dt;
     if(G.wantedSpawnT<=0){
-      G.wantedSpawnT=R(5000,9000);
+      G.wantedSpawnT=R(7000,12000);
       const polCount=G.entities.filter(e=>e instanceof Vehicle&&e.isPol&&e.alive).length;
-      const target=G.wanted*2;
-      if(polCount<target){
-        const a=R(0,Math.PI*2),d=R(350,600);
+      const vehicleTarget=Math.max(0,G.wanted-1);
+      if(polCount<vehicleTarget){
+        const a=R(0,Math.PI*2),d=R(420,720);
         const sx=G.player.x+Math.cos(a)*d,sy=G.player.y+Math.sin(a)*d;
         const v=new Vehicle(sx,sy,G.wanted>=4?'polheli':'police');
         v.driver={isPoliceDummy:true}; // non-null, non-player driver
         G.entities.push(v);
       }
       const copCount=G.entities.filter(e=>e instanceof CopOfficer&&e.alive).length;
-      if(copCount<G.wanted*2){
-        const a2=R(0,Math.PI*2),d2=R(200,400);
+      const footTarget=Math.max(1,Math.ceil(G.wanted*1.2)-1);
+      if(copCount<footTarget){
+        const a2=R(0,Math.PI*2),d2=R(260,520);
         G.entities.push(new CopOfficer(G.player.x+Math.cos(a2)*d2,G.player.y+Math.sin(a2)*d2));
       }
     }
