@@ -165,6 +165,28 @@ function laneAngleForPoint(px,py){
   if(orient==='vertical')return Math.random()<0.5?Math.PI/2:-Math.PI/2;
   return R(0,Math.PI*2);
 }
+function canSpawnNpcTrafficAt(x,y,minGap=34){
+  for(const e of G.entities){
+    if(!(e instanceof Vehicle)||!e.alive)continue;
+    if(Math.hypot(e.x-x,e.y-y)<minGap)return false;
+  }
+  return true;
+}
+// Shared NPC traffic spawner used by init and runtime spawning.
+function spawnNpcTrafficVehicle(vtype,pool,targetChooser,anchorX,anchorY){
+  for(let attempt=0;attempt<10;attempt++){
+    const rp=roadNear(anchorX,anchorY,pool,attempt<5?520:220,1800,70);
+    if(!canSpawnNpcTrafficAt(rp.x,rp.y))continue;
+    const v=new Vehicle(rp.x,rp.y,vtype);
+    v.isNpc=true;
+    v.driver=v;
+    v.npcTarget=targetChooser();
+    v.angle=laneAngleForPoint(rp.x,rp.y);
+    G.entities.push(v);
+    return true;
+  }
+  return false;
+}
 function inCity2Zone(){return G.player&&G.player.x>CITY2_X1*TS&&G.player.y<RURAL_Y*TS;}
 function inMilBase(){return G.player&&G.player.x>MIL.x1*TS&&G.player.x<MIL.x2*TS&&G.player.y>MIL.y1*TS&&G.player.y<MIL.y2*TS;}
 function nrm(x,y){const l=Math.hypot(x,y)||1;return{x:x/l,y:y/l};}
@@ -1454,11 +1476,7 @@ function update(dt){
       const types=inC2?['sports','sports','muscle','muscle','car','van','bike']:['car','car','car','van','van','truck','bike','bike'];
       const vtype=types[RI(0,types.length-1)];
       const pool=inC2?city2RoadPts:city1RoadPts;
-      const rp=roadNear(G.player.x,G.player.y,pool,620,1800,90);
-      const v=new Vehicle(rp.x,rp.y,vtype);
-      v.isNpc=true;v.driver=v;v.npcTarget=inC2?randCity2Road():randCity1Road();
-      v.angle=laneAngleForPoint(rp.x,rp.y);
-      G.entities.push(v);
+      spawnNpcTrafficVehicle(vtype,pool,inC2?randCity2Road:randCity1Road,G.player.x,G.player.y);
     }
   }
   // Military base spawning — soldiers and vehicles
@@ -2610,27 +2628,17 @@ function init(){
     roadPts[Math.floor(roadPts.length/4)]||{x:2240,y:2560};
   G.player=new Player(spawnPt.x,spawnPt.y);
 
-  // City 1 vehicles (regular)
+  // City 1 traffic (all road vehicles are active drivers, no decorative parked trucks).
   const c1Types=['car','car','car','car','van','van','truck','truck','bike','bike'];
-  for(let i=0;i<45;i++){
-    const rp=randCity1Road();const vt=c1Types[RI(0,c1Types.length-1)];
-    const v=new Vehicle(rp.x+R(-10,10),rp.y+R(-10,10),vt);v.angle=R(0,Math.PI*2);G.entities.push(v);
+  for(let i=0;i<36;i++){
+    const vt=c1Types[RI(0,c1Types.length-1)];
+    spawnNpcTrafficVehicle(vt,city1RoadPts,randCity1Road,G.player.x,G.player.y);
   }
-  // City 1 NPC-driven cars
-  for(let i=0;i<25;i++){
-    const rp=randCity1Road();const vt=c1Types[RI(0,c1Types.length-1)];
-    const v=new Vehicle(rp.x,rp.y,vt);v.isNpc=true;v.driver=v;v.npcTarget=randCity1Road();v.angle=laneAngleForPoint(rp.x,rp.y);G.entities.push(v);
-  }
-  // City 2 vehicles (more expensive, more dangerous)
+  // City 2 traffic (higher-end car mix, also all active drivers).
   const c2Types=['sports','sports','muscle','muscle','car','van','bike'];
-  for(let i=0;i<35;i++){
-    const rp=randCity2Road();const vt=c2Types[RI(0,c2Types.length-1)];
-    const v=new Vehicle(rp.x+R(-10,10),rp.y+R(-10,10),vt);v.angle=R(0,Math.PI*2);G.entities.push(v);
-  }
-  // City 2 NPC-driven cars
-  for(let i=0;i<20;i++){
-    const rp=randCity2Road();const vt=c2Types[RI(0,c2Types.length-1)];
-    const v=new Vehicle(rp.x,rp.y,vt);v.isNpc=true;v.driver=v;v.npcTarget=randCity2Road();v.angle=laneAngleForPoint(rp.x,rp.y);G.entities.push(v);
+  for(let i=0;i<28;i++){
+    const vt=c2Types[RI(0,c2Types.length-1)];
+    spawnNpcTrafficVehicle(vt,city2RoadPts,randCity2Road,G.player.x,G.player.y);
   }
   // City 1 airport vehicles
   G.entities.push(Object.assign(new Vehicle(116*TS,38*TS,'heli'),{angle:0}));
