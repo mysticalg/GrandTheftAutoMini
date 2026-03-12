@@ -603,6 +603,7 @@ function genMap(){
 
   genTrafficLights();
   placeSpecialLocs();
+  restampBuildingCollisionFromGeometry();
   // Parking lots must stay open: remove/generated building overlap with lot footprints.
   for(let i=bldgs.length-1;i>=0;i--){
     const b=bldgs[i];
@@ -698,6 +699,30 @@ function addSpecialBuilding(spec){
   }
   bldgs.push(spec);
   carveDoorApproach(spec);
+}
+
+function restampBuildingCollisionFromGeometry(){
+  // Keep collision (dark boxes) inside the building geometry so doors remain accessible.
+  const keepMilFence=(tx,ty)=>tx>=MIL.x1&&tx<MIL.x2&&ty>=MIL.y1&&ty<MIL.y2;
+  for(let y=1;y<MH-1;y++)for(let x=1;x<MW-1;x++){
+    if(map[y][x]===T_BUILD&&!keepMilFence(x,y))map[y][x]=T_SW;
+  }
+  for(const b of bldgs){
+    const x1=((b.x/TS)|0)+1,x2=Math.max(x1,(((b.x+b.w)/TS)|0)-2);
+    const y1=((b.y/TS)|0)+1,y2=Math.max(y1,(((b.y+b.h)/TS)|0)-2);
+    for(let ty=y1;ty<=y2;ty++)for(let tx=x1;tx<=x2;tx++){
+      if(tx<1||ty<1||tx>=MW-1||ty>=MH-1)continue;
+      const t=map[ty][tx];
+      if(t===T_WATER||t===T_OCEAN||t===T_RUNWAY||t===T_MIL)continue;
+      map[ty][tx]=T_BUILD;
+    }
+    const doorCx=((b.x+b.w/2)/TS)|0;
+    const doorTy=((b.y+b.h)/TS)|0;
+    for(let oy=-1;oy<=1;oy++)for(let ox=-1;ox<=1;ox++){
+      const tx=doorCx+ox,ty=doorTy+oy;
+      if(tx>0&&ty>0&&tx<MW&&ty<MH&&map[ty][tx]===T_BUILD)map[ty][tx]=T_SW;
+    }
+  }
 }
 
 function placeSpecialLocs(){
