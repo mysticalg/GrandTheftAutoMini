@@ -184,6 +184,29 @@ function wrappedRenderPos(x,y){
     y:G.camera.y+wrapDelta(G.camera.y,y,WORLD_H)
   };
 }
+function isWorldPointOnScreen(wx,wy,margin=0){
+  const rp=wrappedRenderPos(wx,wy);
+  const sx=rp.x-G.camera.x,sy=rp.y-G.camera.y;
+  return sx>=-margin&&sx<=canvas.width+margin&&sy>=-margin&&sy<=canvas.height+margin;
+}
+// Pick an offscreen road point so far-away NPC traffic can retire naturally
+// without popping out while visible in front of the player.
+function offscreenRoadTargetForDespawn(v,samples=90){
+  if(!roadPts.length)return randRoad();
+  let best=null,bestScore=-1;
+  const margin=220;
+  for(let i=0;i<samples;i++){
+    const p=roadPts[RI(0,roadPts.length-1)];
+    if(isWorldPointOnScreen(p.x,p.y,margin))continue;
+    const rp=wrappedRenderPos(p.x,p.y);
+    const sx=rp.x-G.camera.x,sy=rp.y-G.camera.y;
+    const edge=Math.max(Math.abs(sx-canvas.width*0.5),Math.abs(sy-canvas.height*0.5));
+    const d=dst(p,G.player);
+    const score=edge+d*0.55;
+    if(score>bestScore){bestScore=score;best=p;}
+  }
+  return best||randRoad();
+}
 // Pick a road point near an anchor position so spawned traffic fades in naturally
 // around the player instead of appearing/disappearing at arbitrary map-wide points.
 function roadNear(px,py,pool,minD=480,maxD=1600,samples=60){
@@ -904,7 +927,8 @@ class Vehicle extends Entity{
         const pool=inC2?city2RoadPts:city1RoadPts;
         const rp=roadNear(this.x,this.y,pool,180,900,42);
         this.x=rp.x;this.y=rp.y;
-        this.spd=0;this.stuckT=0;this.npcTarget=randRoad();
+        this.spd=0;this.stuckT=0;
+        this.npcTarget=this.npcRetire?offscreenRoadTargetForDespawn(this):randRoad();
       }
       this.lastX=this.x;this.lastY=this.y;
     }
@@ -915,7 +939,7 @@ class Vehicle extends Entity{
     if(this.smokeDmg>80&&Math.random()<0.3)G.particles.push(new Particle(this.x+R(-6,6),this.y+R(-6,6),R(-0.3,0.3),R(-0.8,0),'#666',R(700,1400),R(5,9)));
   }
   updateNpc(dt){
-    if(!this.npcTarget)this.npcTarget=randRoad();
+    if(!this.npcTarget)this.npcTarget=this.npcRetire?offscreenRoadTargetForDespawn(this):randRoad();
     // If outside drivable road, recover toward nearest road center first.
     if(!npcDrivable(this.x,this.y)||tileAt(this.x,this.y)===T_BUILD){
       const rp=nearestRoadPoint(this.x,this.y,48);
@@ -960,7 +984,7 @@ class Vehicle extends Entity{
     const targetCruise=this.mxS*safeSpeedMult;
     if(this.spd>targetCruise)this.spd=Math.max(targetCruise,this.spd-Math.max(0.05,this.acc*0.8));
     else this.spd=Math.min(targetCruise,this.spd+this.acc*0.35);
-    if(Math.hypot(dx,dy)<34)this.npcTarget=randRoad();
+    if(Math.hypot(dx,dy)<34)this.npcTarget=this.npcRetire?offscreenRoadTargetForDespawn(this):randRoad();
 
     // Avoid player when police heat is high.
     if(G.wanted>2&&dst(this,G.player)<120){
@@ -1888,13 +1912,23 @@ function update(dt){
   G.cleanT-=dt;
   if(G.cleanT<=0){
     G.cleanT=4000;
-    // Keep traffic persistent over a wider radius, but retire only very distant NPC cars.
+    // Retire traffic gracefully: assign offscreen exit targets first, then despawn
+    // only once the car is outside the visible view. Avoids front-of-camera pops.
     G.entities=G.entities.filter(e=>{
       if(!e.alive)return false;
       if(e instanceof Vehicle&&e.isNpc&&!e.isPol){
-        // Use wrapped distance so seam-adjacent traffic is not incorrectly culled.
         const d=dst(e,G.player);
-        return d<2800;
+        const onScreen=isWorldPointOnScreen(e.x,e.y,160);
+        if(d>2800&&!e.npcRetire){
+          e.npcRetire=true;
+          e.npcTarget=offscreenRoadTargetForDespawn(e);
+          e.npcDespawnArmedAt=G.time+900;
+        }
+        if(e.npcRetire){
+          if(!onScreen&&d>2200&&G.time>(e.npcDespawnArmedAt||0))return false;
+          return true;
+        }
+        return true;
       }
       return true;
     });
