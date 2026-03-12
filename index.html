@@ -72,6 +72,9 @@ const AP2={x1:278,x2:320,y1:8,y2:50};    // City 2 airport tile bounds
 const BEACH_Y=238,OCEAN_Y=270;
 const T_GRASS=0,T_ROAD=1,T_SW=2,T_BUILD=3,T_WATER=4,T_PARK=5,T_PARK2=6,T_BEACH=7,T_OCEAN=8,T_RUNWAY=9,T_MIL=10;
 const map=[],bldgs=[],roadPts=[],swPts=[],city1RoadPts=[],city2RoadPts=[],SPECIAL_LOCS=[];
+// Timed traffic-light controllers for crossroads.
+const trafficLights=[];
+const TRAFFIC_LIGHT_CYCLE={green:5200,yellow:1200,allRed:500};
 const BWALL=['#8B7355','#A0856C','#6B7280','#7C6D5E','#9B8B7A','#C4956A','#A67C52','#8A9BA8','#7B8FA1','#6B5545'];
 const BROOF=['#5C4A3E','#4A5568','#2D3748','#553C2E','#3D5A6B','#4A3728','#394556','#5A4A3A','#2C3E50','#4A3320'];
 const CAR_COLS=['#E53E3E','#3182CE','#38A169','#D69E2E','#805AD5','#DD6B20','#E2E8F0','#FC8181','#F6AD55','#B7791F'];
@@ -142,6 +145,121 @@ function randCity2Road(){return city2RoadPts.length?city2RoadPts[RI(0,city2RoadP
 function inCity2Zone(){return G.player&&G.player.x>CITY2_X1*TS&&G.player.y<RURAL_Y*TS;}
 function inMilBase(){return G.player&&G.player.x>MIL.x1*TS&&G.player.x<MIL.x2*TS&&G.player.y>MIL.y1*TS&&G.player.y<MIL.y2*TS;}
 function nrm(x,y){const l=Math.hypot(x,y)||1;return{x:x/l,y:y/l};}
+function isCivilianPed(e){return e instanceof Ped||e instanceof BeachPed;}
+function trafficLightState(light,timeMs){
+  const c=TRAFFIC_LIGHT_CYCLE;
+  const cycle=c.green*2+c.yellow*2+c.allRed*2;
+  let t=(timeMs+light.offset)%cycle;
+  if(t<c.green)return{ns:'go',ew:'stop'};
+  t-=c.green;
+  if(t<c.yellow)return{ns:'caution',ew:'stop'};
+  t-=c.yellow;
+  if(t<c.allRed)return{ns:'stop',ew:'stop'};
+  t-=c.allRed;
+  if(t<c.green)return{ns:'stop',ew:'go'};
+  t-=c.green;
+  if(t<c.yellow)return{ns:'stop',ew:'caution'};
+  return{ns:'stop',ew:'stop'};
+}
+// Build one signal per 2x2 crossroad block so AI can obey stop/go timing.
+function genTrafficLights(){
+  trafficLights.length=0;
+  for(let y=1;y<MH-2;y++){
+    for(let x=1;x<MW-2;x++){
+      if(x%CELL!==1||y%CELL!==1)continue;
+      const isCross=map[y]?.[x]===T_ROAD&&map[y]?.[x+1]===T_ROAD&&map[y+1]?.[x]===T_ROAD&&map[y+1]?.[x+1]===T_ROAD;
+      if(!isCross)continue;
+      const cx=(x+1)*TS,cy=(y+1)*TS;
+      // Corner-mounted poles + overhanging masts (American-style placement).
+      trafficLights.push({
+        x:cx,y:cy,tx:x,ty:y,offset:RI(0,4500),
+        corners:[
+          {x:x*TS+5,y:y*TS+5},
+          {x:(x+2)*TS-5,y:y*TS+5},
+          {x:x*TS+5,y:(y+2)*TS-5},
+          {x:(x+2)*TS-5,y:(y+2)*TS-5},
+        ]
+      });
+    }
+  }
+}
+function roadOrientationAt(px,py){
+  if(tileAt(px,py)!==T_ROAD)return null;
+  const tx=px/TS|0,ty=py/TS|0,cx=tx%CELL,cy=ty%CELL;
+  const v=(cx===1||cx===2),h=(cy===1||cy===2);
+  if(v&&h)return 'intersection';
+  if(v)return 'vertical';
+  if(h)return 'horizontal';
+  return null;
+}
+function nearestRoadPoint(px,py,samples=36){
+  if(!roadPts.length)return{x:px,y:py,d:0};
+  let best=roadPts[RI(0,roadPts.length-1)],bestD=Math.hypot(best.x-px,best.y-py);
+  for(let i=0;i<samples;i++){
+    const rp=roadPts[RI(0,roadPts.length-1)];
+    const d=Math.hypot(rp.x-px,rp.y-py);
+    if(d<bestD){best=rp;bestD=d;}
+  }
+  return{x:best.x,y:best.y,d:bestD};
+}
+// Keep NPC traffic aligned to lane centers instead of randomly turning into sidewalks.
+function npcLaneGuide(v){
+  const aheadX=v.x+Math.cos(v.angle)*18,aheadY=v.y+Math.sin(v.angle)*18;
+  const orient=roadOrientationAt(v.x,v.y)||roadOrientationAt(aheadX,aheadY);
+  if(!orient)return null;
+  const motionAxis=Math.abs(Math.cos(v.angle))>=Math.abs(Math.sin(v.angle))?'ew':'ns';
+  let axis=motionAxis;
+  if(orient==='horizontal')axis='ew';
+  else if(orient==='vertical')axis='ns';
+  else if(orient==='intersection'){
+    if(!v.npcInIntersection){
+      const wantTurn=Math.random()<0.24;
+      const base=v.npcLaneAxis||motionAxis;
+      v.npcLaneAxis=wantTurn?(base==='ew'?'ns':'ew'):base;
+    }
+    axis=v.npcLaneAxis||motionAxis;
+  }
+  const tx=v.x/TS|0,ty=v.y/TS|0;
+  const dirX=Math.cos(v.angle)>=0?1:-1,dirY=Math.sin(v.angle)>=0?1:-1;
+  const look=88;
+  const turning=orient==='intersection'&&axis!==motionAxis;
+  if(axis==='ew'){
+    const laneY=ty*TS+(dirX>0?TS*0.68:TS*0.32);
+    return{x:v.x+dirX*look,y:laneY,axis,isIntersection:orient==='intersection',turning};
+  }
+  const laneX=tx*TS+(dirY>0?TS*0.68:TS*0.32);
+  return{x:laneX,y:v.y+dirY*look,axis,isIntersection:orient==='intersection',turning};
+}
+function npcShouldStopAtLight(v,lane){
+  if(!v.isNpc||v.vtype==='bike'||v.floats||v.flies)return null;
+  const axis=lane?.axis||(Math.abs(Math.cos(v.angle))>Math.abs(Math.sin(v.angle))?'ew':'ns');
+  const dirX=Math.cos(v.angle)>=0?1:-1,dirY=Math.sin(v.angle)>=0?1:-1;
+  const laneCoord=axis==='ew'?(lane?.y??v.y):(lane?.x??v.x);
+  let best=null,bestDist=1e9,bestState='go';
+  for(const light of trafficLights){
+    const st=trafficLightState(light,G.time);
+    if(axis==='ew'){
+      const stopLineX=light.x-dirX*16;
+      const along=(stopLineX-v.x)*dirX;
+      const lateral=Math.abs(light.y-laneCoord);
+      if(along<-6||along>240||lateral>16)continue;
+      if(along<bestDist){bestDist=along;best=light;bestState=st.ew;}
+    }else{
+      const stopLineY=light.y-dirY*16;
+      const along=(stopLineY-v.y)*dirY;
+      const lateral=Math.abs(light.x-laneCoord);
+      if(along<-6||along>240||lateral>16)continue;
+      if(along<bestDist){bestDist=along;best=light;bestState=st.ns;}
+    }
+  }
+  if(!best)return null;
+  const brakeDecel=Math.max(0.06,v.acc*1.55);
+  const speed=Math.abs(v.spd);
+  const stopDist=(speed*speed)/(2*brakeDecel)+v.w*0.9+10;
+  const closeToLine=bestDist<10;
+  const shouldStop=bestState==='stop'||(bestState==='caution'&&!closeToLine&&bestDist>Math.max(16,stopDist*0.55));
+  return{shouldStop,dist:bestDist,state:bestState,stopDist};
+}
 function addExplosion(x,y){
   for(let i=0;i<55;i++){const a=R(0,Math.PI*2),s=R(1.5,6);G.particles.push(new Particle(x,y,Math.cos(a)*s,Math.sin(a)*s,i<35?'hsl('+(RI(0,40))+',100%,'+(RI(45,65))+'%)':'#888',R(400,900),R(3,9)));}
   for(let i=0;i<12;i++){const a=R(0,Math.PI*2),s=R(0.5,2);G.particles.push(new Particle(x,y,Math.cos(a)*s,Math.sin(a)*s,'#333',R(600,1200),R(6,12)));}
@@ -259,6 +377,7 @@ function genMap(){
   bldgs.push({x:(MIL.x1+4)*TS,y:(MIL.y1+12)*TS,w:12*TS,h:14*TS,wall:'#4a5a30',roof:'#3a4a22',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'milhangar'});
   bldgs.push({x:(MIL.x2-16)*TS,y:(MIL.y1+12)*TS,w:12*TS,h:10*TS,wall:'#4a5a30',roof:'#3a4a22',floors:2,wsX:[],wsY:[],winW:[],sz:4,special:'milbarracks'});
   bldgs.push({x:(MIL.x1+4)*TS,y:(MIL.y2-18)*TS,w:10*TS,h:10*TS,wall:'#4a5a30',roof:'#3a4a22',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'milstore'});
+  genTrafficLights();
   placeSpecialLocs();
 }
 
@@ -420,7 +539,7 @@ class Bullet extends Entity{
     for(const e of G.entities){
       if(!e.alive||e===this.owner)continue;
       if(e instanceof Vehicle){if(dst(this,e)<(e.w||32)/2){e.hit(this.dmg,this);this.alive=false;return;}}
-      else if(e instanceof Ped||e instanceof CopOfficer||e instanceof MilSoldier){if(dst(this,e)<e.r+2){e.hit(this.dmg,this);this.alive=false;return;}}
+      else if(isCivilianPed(e)||e instanceof CopOfficer||e instanceof MilSoldier){if(dst(this,e)<e.r+2){e.hit(this.dmg,this);this.alive=false;return;}}
     }
     if(this.owner!==G.player&&dst(this,G.player)<G.player.r+2){G.player.hit(this.dmg,this);this.alive=false;}
   }
@@ -444,7 +563,7 @@ class Rocket extends Entity{
     for(const e of G.entities){
       if(!e.alive||e===this.owner)continue;
       if(e instanceof Vehicle&&dst(this,e)<(e.w||32)/2+14){this.explode();return;}
-      if((e instanceof Ped||e instanceof CopOfficer||e instanceof MilSoldier)&&dst(this,e)<24){this.explode();return;}
+      if((isCivilianPed(e)||e instanceof CopOfficer||e instanceof MilSoldier)&&dst(this,e)<24){this.explode();return;}
     }
     if(this.owner!==G.player&&dst(this,G.player)<24&&!G.player.inCar){this.explode();}
     if(this.owner!==G.player&&G.player.inCar&&dst(this,G.player.inCar)<(G.player.inCar.w||32)/2+14){this.explode();}
@@ -457,7 +576,7 @@ class Rocket extends Entity{
       const d=dst(this,e);
       if(d<140){
         if(e instanceof Vehicle)e.hit(200,this);
-        else if(e instanceof Ped||e instanceof CopOfficer||e instanceof MilSoldier){if(e.hit)e.hit(120,this);}
+        else if(isCivilianPed(e)||e instanceof CopOfficer||e instanceof MilSoldier){if(e.hit)e.hit(120,this);}
       }
     }
     if(dst(this,G.player)<140&&!G.player.inCar)G.player.hit(100,this);
@@ -497,7 +616,8 @@ class Vehicle extends Entity{
     this.flies=!!cfg.flies;this.floats=!!cfg.floats;this.isPol=!!cfg.isPol;
     this.spd=0;this.angle=0;this.driver=null;this.isNpc=false;
     this.npcTarget=null;this.stuckT=0;this.lastX=x;this.lastY=y;
-    this.smokeDmg=0;this.sirenT=0;this.rotorA=0;this.altitude=this.flies?60:0;
+    this.npcLaneAxis=null;this.npcInIntersection=false;
+    this.smokeDmg=0;this.sirenT=0;this.sirenPlayed=false;this.rotorA=0;this.altitude=this.flies?60:0;
     this._exploded=false;
   }
   canMove(nx,ny){
@@ -547,6 +667,7 @@ class Vehicle extends Entity{
       G.engineT=(G.engineT||0)-dt;if(G.engineT<=0){G.engineT=120;if(Math.abs(this.spd)>0.5)sound('engine');}
     } else if(this.isPol&&this.driver){
       if(G.wanted>0)this.updatePolice(dt);
+      else {this.sirenPlayed=false;this.sirenT=0;}
     } else if(this.isNpc&&this.driver){
       this.updateNpc(dt);
     }
@@ -555,12 +676,13 @@ class Vehicle extends Entity{
       const ny=this.y+Math.sin(this.angle)*this.spd;
       if(this.canMove(nx,ny)){this.x=nx;this.y=ny;}
       else{
-        this.spd*=-0.15;
-        // For NPC cars, turn toward nearest road rather than random
-        if(this.isNpc&&this.npcTarget){
-          const tx=this.npcTarget.x-this.x,ty=this.npcTarget.y-this.y;
-          this.angle=Math.atan2(ty,tx)+R(-0.4,0.4);
+        // NPCs should correct back toward lane center instead of bouncing into pavement.
+        if(this.isNpc){
+          this.spd=Math.max(0,this.spd*0.45);
+          const rp=nearestRoadPoint(this.x,this.y,42);
+          this.angle=Math.atan2(rp.y-this.y,rp.x-this.x);
         } else {
+          this.spd*=-0.15;
           this.angle+=R(0.2,0.6)*(Math.random()>0.5?1:-1);
         }
       }
@@ -577,24 +699,58 @@ class Vehicle extends Entity{
     }
     if(!this.flies&&!this.floats&&Math.abs(this.spd)>1.2){
       if(dst(this,G.player)<22&&!G.player.inCar)G.player.hit(Math.abs(this.spd)*5,this);
-      for(const e of G.entities){if(e instanceof Ped&&e.alive&&dst(this,e)<20)e.hit(Math.abs(this.spd)*7,this);}
+      for(const e of G.entities){if(isCivilianPed(e)&&e.alive&&dst(this,e)<20)e.hit(Math.abs(this.spd)*7,this);}
     }
     if(this.smokeDmg>80&&Math.random()<0.3)G.particles.push(new Particle(this.x+R(-6,6),this.y+R(-6,6),R(-0.3,0.3),R(-0.8,0),'#666',R(700,1400),R(5,9)));
   }
   updateNpc(dt){
     if(!this.npcTarget)this.npcTarget=randRoad();
-    // If stuck inside a building, teleport to road
-    if(tileAt(this.x,this.y)===T_BUILD){
-      const rp=randRoad();this.x=rp.x;this.y=rp.y;this.spd=0;this.npcTarget=randRoad();return;
+    // If outside drivable road, recover toward nearest road center first.
+    if(!npcDrivable(this.x,this.y)||tileAt(this.x,this.y)===T_BUILD){
+      const rp=nearestRoadPoint(this.x,this.y,48);
+      this.angle=Math.atan2(rp.y-this.y,rp.x-this.x);
+      this.spd=Math.min(this.spd+this.acc*0.25,this.mxS*0.35);
+      this.npcTarget={x:rp.x,y:rp.y};
+      return;
     }
-    const dx=this.npcTarget.x-this.x,dy=this.npcTarget.y-this.y;
+
+    const lane=npcLaneGuide(this);
+    const target=lane||this.npcTarget;
+    if(lane){
+      this.npcLaneAxis=lane.axis;
+      this.npcInIntersection=!!lane.isIntersection;
+      this.npcTarget=lane;
+    } else {
+      this.npcInIntersection=false;
+    }
+
+    const dx=target.x-this.x,dy=target.y-this.y;
     let ang=Math.atan2(dy,dx),diff=ang-this.angle;
     while(diff>Math.PI)diff-=Math.PI*2;while(diff<-Math.PI)diff+=Math.PI*2;
-    if(Math.abs(diff)>0.06)this.angle+=Math.sign(diff)*Math.min(this.trn*0.85,Math.abs(diff));
-    this.spd=Math.min(this.spd+this.acc*0.4,this.mxS*0.62);
-    if(Math.hypot(dx,dy)<50){this.npcTarget=randRoad();}
-    // Avoid player
-    if(G.wanted>2&&dst(this,G.player)<120){const ax=this.x-G.player.x,ay=this.y-G.player.y;this.angle=Math.atan2(ay,ax);this.spd=Math.min(this.spd+0.1,this.mxS*0.8);}
+    const steerLimit=this.trn*(lane?(lane.turning?0.58:0.72):0.9);
+    if(Math.abs(diff)>0.02)this.angle+=Math.sign(diff)*Math.min(steerLimit,Math.abs(diff));
+
+    // Respect vehicle handling limits: heavy/slow vehicles should brake earlier.
+    const lightControl=npcShouldStopAtLight(this,lane);
+    if(lightControl&&lightControl.shouldStop){
+      const brakePower=Math.max(0.05,this.acc*0.95);
+      const targetSpeed=lightControl.dist<14?0:Math.min(this.mxS*0.28,lightControl.dist/Math.max(30,lightControl.stopDist)*this.mxS*0.4);
+      this.spd=Math.max(targetSpeed,this.spd-brakePower);
+      if(this.spd<0.03)this.spd=0;
+      return;
+    }
+
+    // Cornering cap keeps vehicles in-lane through turns instead of sliding wide.
+    const laneCap=lane?(lane.turning?0.34:0.58):0.52;
+    this.spd=Math.min(this.spd+this.acc*0.34,this.mxS*laneCap);
+    if(Math.hypot(dx,dy)<34)this.npcTarget=randRoad();
+
+    // Avoid player when police heat is high.
+    if(G.wanted>2&&dst(this,G.player)<120){
+      const ax=this.x-G.player.x,ay=this.y-G.player.y;
+      this.angle=Math.atan2(ay,ax);
+      this.spd=Math.min(this.spd+0.08,this.mxS*0.75);
+    }
   }
   updatePolice(dt){
     const tgt=G.player.inCar||G.player;
@@ -605,7 +761,11 @@ class Vehicle extends Entity{
     if(d>80)this.spd=Math.min(this.spd+this.acc,this.mxS);else this.spd*=0.88;
     if(G.player.inCar&&dst(this,G.player.inCar)<40)G.player.inCar.hit(9,this);
     if(!G.player.inCar&&dst(this,G.player)<22)G.player.hit(7,this);
-    this.sirenT-=dt;if(this.sirenT<=0){this.sirenT=700;sound('siren');}
+    // Siren should trigger once per chase start, not loop constantly.
+    if(!this.sirenPlayed){
+      sound('siren');
+      this.sirenPlayed=true;
+    }
   }
   hit(dmg,src){this.smokeDmg+=dmg;this.hp-=dmg;if(this.hp<=0)this.explode();}
   explode(){
@@ -649,6 +809,51 @@ class Ped extends Entity{
     this.hp-=dmg;
     for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#e53e3e',300,3));
     if(this.hp<=0){const m=RI(10,120);addMoney(m);notify('+$'+m);this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){G.kills++;addWanted(10,200);if(G.mission&&G.mission.type==='kill'){const inC2=this.x>CITY2_X1*TS;const inC1=this.x<CITY1_X2*TS;if(G.mission.area==='city2'&&inC2){G.mission.progress++;checkMission();}else if(G.mission.area==='city1'&&inC1){G.mission.progress++;checkMission();}else if(!G.mission.area){G.mission.progress++;checkMission();}}updateMissionObj();}}
+  }
+}
+
+
+// Beach civilian variants: swimmers, surfers, and ice-cream queue residents.
+class BeachPed extends Entity{
+  constructor(x,y,role='beachgoer'){
+    super(x,y);this.r=8;this.role=role;this.hp=35;
+    this.appearance=randAppearance();this.walkFrame=RI(0,9);this.spd=R(0.6,1.5);
+    this.angle=R(0,Math.PI*2);this.idleT=R(500,2400);this.home={x,y};this.phase=R(0,Math.PI*2);
+    this.queueT=R(1200,2600);this.surfDir=Math.random()>0.5?1:-1;
+  }
+  update(dt){
+    this.phase+=dt*0.002;
+    if(this.role==='queue'||this.role==='vendor'){
+      this.idleT-=dt;
+      if(this.idleT<=0){this.idleT=R(900,1800);this.angle+=R(-0.4,0.4);}
+      const wobble=this.role==='queue'?2.8:1.6;
+      this.x=this.home.x+Math.sin(this.phase*0.8)*wobble;
+      this.y=this.home.y+Math.cos(this.phase*0.6)*wobble;
+      return;
+    }
+    if(this.role==='swimmer'){
+      this.x+=Math.cos(this.angle)*this.spd*0.4;
+      this.y+=Math.sin(this.angle)*this.spd*0.25;
+      if(tileAt(this.x,this.y)!==T_OCEAN)this.angle+=Math.PI*0.7;
+      if(this.y<OCEAN_Y*TS+8||this.y>(OCEAN_Y+6)*TS)this.angle+=Math.PI*0.5;
+      if(Math.random()<0.02)this.angle+=R(-0.35,0.35);
+      return;
+    }
+    if(this.role==='surfer'){
+      this.x+=this.surfDir*1.8;
+      this.y=this.home.y+Math.sin(this.phase*1.8)*7;
+      if(this.x<2*TS||this.x>(MW-2)*TS)this.surfDir*=-1;
+      return;
+    }
+    this.idleT-=dt;
+    if(this.idleT<=0){this.idleT=R(1200,2800);this.angle=R(0,Math.PI*2);}
+    const nx=this.x+Math.cos(this.angle)*this.spd*0.7,ny=this.y+Math.sin(this.angle)*this.spd*0.7;
+    if(pedWalkable(nx,ny)){this.x=nx;this.y=ny;}else this.angle+=R(0.4,1);
+  }
+  hit(dmg){
+    this.hp-=dmg;
+    for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#e53e3e',300,3));
+    if(this.hp<=0)this.alive=false;
   }
 }
 
@@ -789,7 +994,7 @@ class Player extends Entity{
       this.punchT=250;this.atkT=500;sound('punch');
       let hitPed=false,hitCop=false;
       for(const e of G.entities){
-        if(e instanceof Ped&&dst(this,e)<42){e.hit(15+(G.drug&&G.drug.type==='power'?30:0),this);hitPed=true;}
+        if(isCivilianPed(e)&&dst(this,e)<42){e.hit(15+(G.drug&&G.drug.type==='power'?30:0),this);hitPed=true;}
         if(e instanceof CopOfficer&&dst(this,e)<42){e.hit(20+(G.drug&&G.drug.type==='power'?40:0),this);hitCop=true;}
         if(e instanceof Vehicle&&dst(this,e)<42){e.hit(5,this);}
       }
@@ -1146,15 +1351,16 @@ function update(dt){
     document.getElementById('drug-fill').style.width=(pct*100)+'%';
     if(G.drug.timer<=0){G.drug={type:null,timer:0,maxTimer:0};document.getElementById('drug-bar').style.display='none';notify('Drug wore off.',1500);}
   }
-  // Wanted cooldown + score decay (slower escalation, steadier cooldown).
+  // Wanted cooldown + score decay tuned to clear noticeably faster.
   if(G.wantedCooldownT>0)G.wantedCooldownT=Math.max(0,G.wantedCooldownT-dt);
   if(G.wantedScore>0){
     G.wantedDecayT+=dt;
-    const decayTick=350;
+    const decayTick=250;
     if(G.wantedDecayT>=decayTick){
       const steps=(G.wantedDecayT/decayTick)|0;
       G.wantedDecayT-=steps*decayTick;
-      const decayPerStep=0.07+G.wanted*0.045;
+      // Faster decay so stars don't linger too long after disengaging.
+      const decayPerStep=0.2+G.wanted*0.11;
       G.wantedScore=Math.max(0,G.wantedScore-steps*decayPerStep);
       const prevWanted=G.wanted;
       syncWantedFromScore();
@@ -1415,6 +1621,26 @@ function drawPed(ped){
   drawThoughtBubble(ped.x,ped.y,pedThoughtText(ped));
 }
 
+
+function drawBeachPed(ped){
+  if(ped.role==='swimmer'){
+    ctx.fillStyle='rgba(255,255,255,0.35)';ctx.beginPath();ctx.arc(ped.x,ped.y+2,8,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=ped.appearance.skin;ctx.beginPath();ctx.arc(ped.x,ped.y-2,4.5,0,Math.PI*2);ctx.fill();
+    return;
+  }
+  if(ped.role==='surfer'){
+    ctx.save();ctx.translate(ped.x,ped.y);ctx.rotate(ped.surfDir>0?0:Math.PI);
+    ctx.fillStyle='#f6ad55';ctx.fillRect(-14,-5,28,10);
+    ctx.fillStyle='#fff';ctx.fillRect(-12,-2,24,4);
+    ctx.restore();
+    drawHuman(ped.x,ped.y-6,ped.surfDir>0?0:Math.PI,ped.walkFrame,ped.appearance,true,null,null);
+    return;
+  }
+  drawHuman(ped.x,ped.y,ped.angle,ped.walkFrame,ped.appearance,false,null,null);
+  if(ped.role==='queue')drawThoughtBubble(ped.x,ped.y,'🍦');
+  if(ped.role==='vendor')drawThoughtBubble(ped.x,ped.y,'🍨');
+}
+
 function drawCop(cop){
   drawHuman(cop.x,cop.y,cop.angle,cop.walkFrame,cop.appearance,true,'pistol','COP');
   // Badge flash
@@ -1667,6 +1893,10 @@ function drawCar(car){
     ctx.fillStyle='rgba(255,255,255,0.7)';ctx.font='bold 10px Courier New';ctx.textAlign='center';
     ctx.fillText(car.name,car.x,car.y-car.h/2-15);
   }
+  if(car.isIceCreamVan){
+    ctx.fillStyle='rgba(255,255,255,0.9)';ctx.font='bold 9px Arial';ctx.textAlign='center';
+    ctx.fillText('ICE CREAM',car.x,car.y+3);
+  }
 }
 
 function drawBullet(b){
@@ -1716,8 +1946,9 @@ function drawTiles(){
           const isHorizOnly=(cy2===1||cy2===2)&&!(cx2===1||cx2===2);
           // White edge markings
           ctx.fillStyle='rgba(255,255,255,0.65)';
-          if(cy2===1)ctx.fillRect(px,py,TS,2);         // top edge of horiz road
-          if(cy2===2)ctx.fillRect(px,py+TS-2,TS,2);    // bottom edge
+          const isIntersection=(cx2===1||cx2===2)&&(cy2===1||cy2===2);
+          if(cy2===1&&!isIntersection)ctx.fillRect(px,py,TS,2);         // top edge of horiz road
+          if(cy2===2&&!isIntersection)ctx.fillRect(px,py+TS-2,TS,2);    // bottom edge
           if(cx2===1&&isVertOnly)ctx.fillRect(px,py,2,TS);      // left edge of vert road
           if(cx2===2&&isVertOnly)ctx.fillRect(px+TS-2,py,2,TS); // right edge
           // Yellow dashed center lines
@@ -1791,6 +2022,37 @@ function drawTiles(){
         }
       }
     }
+  }
+}
+
+
+function drawTrafficLights(){
+  for(const light of trafficLights){
+    const sx=light.x-G.camera.x,sy=light.y-G.camera.y;
+    if(sx<-120||sy<-120||sx>canvas.width+120||sy>canvas.height+120)continue;
+    const st=trafficLightState(light,G.time);
+    // Pole corners and mast arms over road lanes (American city style).
+    for(const c of light.corners){
+      ctx.fillStyle='rgba(35,35,35,0.9)';
+      ctx.fillRect(c.x-1.5,c.y-1.5,3,16); // pole base
+    }
+    // North-facing head (controls southbound lane => NS state)
+    ctx.strokeStyle='rgba(30,30,30,0.95)';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(light.corners[0].x,light.corners[0].y+2);ctx.lineTo(light.x-8,light.y-18);ctx.stroke();
+    ctx.fillStyle='rgba(0,0,0,0.72)';ctx.fillRect(light.x-14,light.y-24,10,16);
+    ctx.fillStyle=st.ns==='go'?'#22c55e':st.ns==='caution'?'#facc15':'#ef4444';ctx.beginPath();ctx.arc(light.x-9,light.y-16,3.1,0,Math.PI*2);ctx.fill();
+    // South-facing head
+    ctx.beginPath();ctx.moveTo(light.corners[3].x,light.corners[3].y-2);ctx.lineTo(light.x+8,light.y+18);ctx.stroke();
+    ctx.fillStyle='rgba(0,0,0,0.72)';ctx.fillRect(light.x+4,light.y+8,10,16);
+    ctx.fillStyle=st.ns==='go'?'#22c55e':st.ns==='caution'?'#facc15':'#ef4444';ctx.beginPath();ctx.arc(light.x+9,light.y+16,3.1,0,Math.PI*2);ctx.fill();
+    // West-facing head (controls eastbound lane => EW state)
+    ctx.beginPath();ctx.moveTo(light.corners[2].x+2,light.corners[2].y);ctx.lineTo(light.x-18,light.y+8);ctx.stroke();
+    ctx.fillStyle='rgba(0,0,0,0.72)';ctx.fillRect(light.x-24,light.y+4,16,10);
+    ctx.fillStyle=st.ew==='go'?'#22c55e':st.ew==='caution'?'#facc15':'#ef4444';ctx.beginPath();ctx.arc(light.x-16,light.y+9,3.1,0,Math.PI*2);ctx.fill();
+    // East-facing head
+    ctx.beginPath();ctx.moveTo(light.corners[1].x-2,light.corners[1].y);ctx.lineTo(light.x+18,light.y-8);ctx.stroke();
+    ctx.fillStyle='rgba(0,0,0,0.72)';ctx.fillRect(light.x+8,light.y-14,16,10);
+    ctx.fillStyle=st.ew==='go'?'#22c55e':st.ew==='caution'?'#facc15':'#ef4444';ctx.beginPath();ctx.arc(light.x+16,light.y-9,3.1,0,Math.PI*2);ctx.fill();
   }
 }
 
@@ -1942,6 +2204,7 @@ function render(){
   ctx.save();
   ctx.translate(-Math.floor(G.camera.x)+sx,-Math.floor(G.camera.y)+sy);
   drawTiles();
+  drawTrafficLights();
   drawBldgs();
 
   // Draw helipad marker
@@ -2000,6 +2263,7 @@ function render(){
     else if(e instanceof Bullet)drawBullet(e);
     else if(e instanceof Pickup)drawPickup(e);
     else if(e instanceof Ped)drawPed(e);
+    else if(e instanceof BeachPed)drawBeachPed(e);
     else if(e instanceof CopOfficer)drawCop(e);
     else if(e instanceof MilSoldier)drawMilSoldier(e);
   }
@@ -2323,6 +2587,14 @@ function init(){
   // Boats at beaches
   for(let i=0;i<4;i++)G.entities.push(Object.assign(new Vehicle((22+i*6)*TS,(BEACH_Y-4)*TS,'boat'),{angle:0}));
   for(let i=0;i<3;i++)G.entities.push(Object.assign(new Vehicle((200+i*6)*TS,(BEACH_Y-4)*TS,'boat'),{angle:0}));
+  // Beach life set dressing: swimmers, surfers, and an ice-cream van queue.
+  const iceVan=Object.assign(new Vehicle(52*TS,(BEACH_Y-4)*TS,'van'),{angle:0,driver:{isStatic:true},isIceCreamVan:true,col:'#F9FAFB'});
+  G.entities.push(iceVan);
+  G.entities.push(new BeachPed(iceVan.x+10,iceVan.y+26,'vendor'));
+  for(let i=0;i<6;i++)G.entities.push(new BeachPed(iceVan.x-24-i*12,iceVan.y+28+((i%2)*6),'queue'));
+  for(let i=0;i<16;i++)G.entities.push(new BeachPed(R(10,MW-10)*TS,R(BEACH_Y+2,OCEAN_Y-2)*TS,'beachgoer'));
+  for(let i=0;i<14;i++)G.entities.push(new BeachPed(R(6,MW-6)*TS,R(OCEAN_Y+0.4,OCEAN_Y+5.3)*TS,'swimmer'));
+  for(let i=0;i<10;i++)G.entities.push(new BeachPed(R(6,MW-6)*TS,R(OCEAN_Y+1.2,OCEAN_Y+4.8)*TS,'surfer'));
   // Pedestrians — city 1
   for(let i=0;i<50;i++){
     const pool=swPts.filter(p=>p.x<CITY1_X2*TS&&p.y<RURAL_Y*TS);
