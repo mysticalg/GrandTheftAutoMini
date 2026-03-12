@@ -2591,8 +2591,20 @@ function drawTiles(){
         ctx.setLineDash([]);
       }
     } else if(t===T_SW){
-      ctx.fillStyle=drugT?'hsl('+((x*y%60+tt*10)%360)+',40%,45%)':'#7a7570';ctx.fillRect(px,py,TS,TS);
-      if(!drugT){ctx.fillStyle='#6e6a65';ctx.fillRect(px,py,TS/2,TS/2);ctx.fillRect(px+TS/2,py+TS/2,TS/2,TS/2);ctx.fillStyle='#8a8580';if((x+y)%2===0)ctx.fillRect(px+TS/2,py,TS/2,TS/2);else ctx.fillRect(px,py+TS/2,TS/2,TS/2);ctx.fillStyle='rgba(255,255,255,0.08)';const cx2=x%CELL,cy2=y%CELL;if(cy2===0&&map[y+1]?.[x]===T_ROAD)ctx.fillRect(px,py+TS-3,TS,3);if(cy2===3&&map[y-1]?.[x]===T_ROAD)ctx.fillRect(px,py,TS,3);if(cx2===0&&map[y]?.[x+1]===T_ROAD)ctx.fillRect(px+TS-3,py,3,TS);if(cx2===3&&map[y]?.[x-1]===T_ROAD)ctx.fillRect(px,py,3,TS);}else{ctx.fillStyle='rgba(255,255,0,0.2)';ctx.fillRect(px,py,TS/2,TS/2);ctx.fillRect(px+TS/2,py+TS/2,TS/2,TS/2);}    
+      // Softer sidewalk shading so city blocks don't look like harsh gray boxes.
+      ctx.fillStyle=drugT?'hsl('+((x*y%60+tt*10)%360)+',40%,45%)':'#7d7a75';ctx.fillRect(px,py,TS,TS);
+      if(!drugT){
+        ctx.fillStyle='rgba(255,255,255,0.035)';
+        if((x+y)%2===0)ctx.fillRect(px+2,py+2,TS-4,TS-4);
+        ctx.fillStyle='rgba(0,0,0,0.035)';
+        if((x+y)%3===0)ctx.fillRect(px+3,py+3,TS-6,TS-6);
+        ctx.fillStyle='rgba(255,255,255,0.08)';
+        const cx2=x%CELL,cy2=y%CELL;
+        if(cy2===0&&map[y+1]?.[x]===T_ROAD)ctx.fillRect(px,py+TS-3,TS,3);
+        if(cy2===3&&map[y-1]?.[x]===T_ROAD)ctx.fillRect(px,py,TS,3);
+        if(cx2===0&&map[y]?.[x+1]===T_ROAD)ctx.fillRect(px+TS-3,py,3,TS);
+        if(cx2===3&&map[y]?.[x-1]===T_ROAD)ctx.fillRect(px,py,3,TS);
+      }else{ctx.fillStyle='rgba(255,255,0,0.2)';ctx.fillRect(px,py,TS/2,TS/2);ctx.fillRect(px+TS/2,py+TS/2,TS/2,TS/2);}    
     } else if(t===T_BUILD){ctx.fillStyle='#1a1a1a';ctx.fillRect(px,py,TS,TS);
     } else if(t===T_WATER){const hue=drugT?(tt*50)%360:210+Math.sin(x*0.3+tt)*5;ctx.fillStyle='hsl('+hue+',60%,'+(22+Math.sin(y*0.4+tt)*4)+'%)';ctx.fillRect(px,py,TS,TS);if((x+y)%3===0){ctx.fillStyle='rgba(255,255,255,0.06)';ctx.fillRect(px+4,py+TS/2,TS-8,2);}
     } else if(t===T_PARK){ctx.fillStyle=drugT?'hsl('+((x*3+y*2+tt*40)%360)+',80%,40%)':'hsl(120,'+(35+(x%5)*2)+'%,'+(27+(y%4)*2)+'%)';ctx.fillRect(px,py,TS,TS);if((x+y)%5===0){ctx.fillStyle=drugT?'hsl('+((tt*60)%360)+',100%,50%)':'#2a5a20';ctx.beginPath();ctx.arc(px+TS/2,py+TS/2,6,0,Math.PI*2);ctx.fill();}
@@ -2621,11 +2633,13 @@ function drawTrafficLights(){
     if(sx<-80||sy<-80||sx>canvas.width+80||sy>canvas.height+80)continue;
     const st=trafficLightState(light,G.time);
     // American-style corner poles + overhang arms, with signal heads facing travel lanes.
+    // Push poles onto sidewalk corners (outside lane area), not on roadway.
+    const poleOff=TS*1.06;
     const corners=[
-      {x:light.x-TS*0.78,y:light.y-TS*0.78,armX:18,armY:0,state:st.ew},
-      {x:light.x+TS*0.78,y:light.y-TS*0.78,armX:0,armY:18,state:st.ns},
-      {x:light.x+TS*0.78,y:light.y+TS*0.78,armX:-18,armY:0,state:st.ew},
-      {x:light.x-TS*0.78,y:light.y+TS*0.78,armX:0,armY:-18,state:st.ns}
+      {x:light.x-poleOff,y:light.y-poleOff,armX:18,armY:0,state:st.ew},
+      {x:light.x+poleOff,y:light.y-poleOff,armX:0,armY:18,state:st.ns},
+      {x:light.x+poleOff,y:light.y+poleOff,armX:-18,armY:0,state:st.ew},
+      {x:light.x-poleOff,y:light.y+poleOff,armX:0,armY:-18,state:st.ns}
     ];
     for(const c of corners){
       ctx.fillStyle='rgba(28,33,42,0.9)';
@@ -3192,17 +3206,19 @@ function drawMinimap(){
     return {x:sz/2+dx*scale,y:sz/2+dy*scale};
   };
 
-  // Cleaner minimap style: draw roads/water/features only (no tile-grid checker look).
+  // Colored minimap style: include terrain/building colors for fast orientation.
   const worldStep=TS;
   for(let oy=-span/2;oy<span/2;oy+=worldStep){
     for(let ox=-span/2;ox<span/2;ox+=worldStep){
       const wx=wrapCoord(centerX+ox,WORLD_W),wy=wrapCoord(centerY+oy,WORLD_H);
       const t=tileAt(wx,wy);
       const p=mapPoint(wx,wy);
-      if(t===T_WATER||t===T_OCEAN){mmx.fillStyle='rgba(36,94,170,0.68)';mmx.fillRect(p.x,p.y,2,2);}
-      else if(t===T_BEACH){mmx.fillStyle='rgba(198,160,96,0.38)';mmx.fillRect(p.x,p.y,2,2);}
-      else if(t===T_ROAD||t===T_RUNWAY){mmx.fillStyle='rgba(230,230,230,0.82)';mmx.fillRect(p.x,p.y,2,2);}
-      else if(t===T_MIL){mmx.fillStyle='rgba(110,150,90,0.55)';mmx.fillRect(p.x,p.y,2,2);}
+      if(t===T_WATER||t===T_OCEAN){mmx.fillStyle='rgba(36,94,170,0.72)';mmx.fillRect(p.x,p.y,2,2);}
+      else if(t===T_BEACH){mmx.fillStyle='rgba(210,180,115,0.65)';mmx.fillRect(p.x,p.y,2,2);}
+      else if(t===T_ROAD||t===T_RUNWAY){mmx.fillStyle='rgba(245,245,245,0.9)';mmx.fillRect(p.x,p.y,2,2);}
+      else if(t===T_MIL){mmx.fillStyle='rgba(110,150,90,0.72)';mmx.fillRect(p.x,p.y,2,2);}
+      else if(t===T_PARK||t===T_GRASS){mmx.fillStyle='rgba(55,120,58,0.45)';mmx.fillRect(p.x,p.y,2,2);}
+      else if(t===T_BUILD){mmx.fillStyle='rgba(75,48,38,0.5)';mmx.fillRect(p.x,p.y,2,2);}
     }
   }
 
@@ -3228,6 +3244,15 @@ function drawMinimap(){
     let wx=null,wy=null;
     if(G.mission.type==='goto'&&G.mission.targetTile){wx=G.mission.targetTile.x*TS;wy=G.mission.targetTile.y*TS;}
     else if(G.mission.type==='steal_vehicle'&&G.player.inCar&&G.player.inCar.vtype===G.mission.vtype&&G.mission.deliverTile){wx=G.mission.deliverTile.x*TS;wy=G.mission.deliverTile.y*TS;}
+    else if(G.mission.type==='visit'&&G.mission.targetLoc){
+      const loc=SPECIAL_LOCS.find(l=>l.type===G.mission.targetLoc);
+      if(loc){wx=loc.x+loc.w*0.5;wy=loc.y+loc.h*0.5;}
+    }
+    else if(G.mission.type==='kill'){
+      if(G.mission.area==='city1'){wx=(CITY1_X2*0.5)*TS;wy=(RURAL_Y*0.5)*TS;}
+      else if(G.mission.area==='city2'){wx=((CITY2_X1+(MW-CITY2_X1)*0.5))*TS;wy=(RURAL_Y*0.5)*TS;}
+      else if(G.mission.area==='milbase'){wx=((MIL.x1+MIL.x2)*0.5)*TS;wy=((MIL.y1+MIL.y2)*0.5)*TS;}
+    }
     if(wx!==null){
       objectiveWorld={x:wx,y:wy};
       const p=mapPoint(wx,wy);const a=0.5+Math.sin(G.time*0.005)*0.5;mmx.fillStyle='rgba(255,220,0,'+a+')';mmx.beginPath();mmx.arc(p.x,p.y,4,0,Math.PI*2);mmx.fill();
@@ -3250,8 +3275,11 @@ function drawMinimap(){
   if(objectiveWorld){
     const dx=wrapDelta(centerX,objectiveWorld.x,WORLD_W),dy=wrapDelta(centerY,objectiveWorld.y,WORLD_H);
     const ang=Math.atan2(dy,dx);
-    const r=sz*0.42;
+    const r=sz*0.46;
     const ax=sz/2+Math.cos(ang)*r,ay=sz/2+Math.sin(ang)*r;
+    // Circumference indicator ring notch for unmistakable direction guidance.
+    mmx.strokeStyle='rgba(255,220,0,0.95)';mmx.lineWidth=3;
+    mmx.beginPath();mmx.arc(sz/2,sz/2,sz*0.47,ang-0.16,ang+0.16);mmx.stroke();
     mmx.save();
     mmx.translate(ax,ay);mmx.rotate(ang);
     mmx.fillStyle='rgba(255,210,0,0.95)';
