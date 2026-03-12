@@ -391,11 +391,8 @@ function genMap(){
       if(x>=MIL.x1&&x<MIL.x2&&y>=MIL.y1&&y<MIL.y2){map[y][x]=genMilTile(x,y);continue;}
       // Rural area (below both cities but above beach)
       if(y>=RURAL_Y&&y<BEACH_Y){
-        // Rural uses same CELL grid but no buildings — just grass, roads, and sidewalks
-        const cx=x%CELL,cy=y%CELL;
-        if(cx===1||cx===2||cy===1||cy===2)map[y][x]=T_ROAD;
-        else if(cx===0||cx===3||cy===0||cy===3)map[y][x]=T_SW;
-        else map[y][x]=T_GRASS;
+        // Rural starts as open terrain; roads are carved as winding strips below.
+        map[y][x]=T_GRASS;
         continue;
       }
       // Highway corridor between cities (no buildings)
@@ -437,6 +434,36 @@ function genMap(){
   // Beach road access
   for(let x=0;x<CITY1_X2;x++){const cx=x%CELL;if(cx===1||cx===2){if(BEACH_Y+2<MH)map[BEACH_Y-3][x]=T_ROAD;}}
   for(let x=CITY2_X1;x<MW;x++){const cx=x%CELL;if(cx===1||cx===2){if(BEACH_Y+2<MH)map[BEACH_Y-3][x]=T_ROAD;}}
+
+  // Carve long arterials + diagonal links to break up perfect grid feel.
+  const stampRoad=(tx,ty,w=1)=>{
+    for(let oy=-w;oy<=w;oy++)for(let ox=-w;ox<=w;ox++){
+      const x=(tx+ox)|0,y=(ty+oy)|0;
+      if(x<=1||y<=1||x>=MW-1||y>=MH-1)continue;
+      if(map[y][x]===T_WATER||map[y][x]===T_OCEAN||map[y][x]===T_RUNWAY||map[y][x]===T_MIL)continue;
+      map[y][x]=T_ROAD;
+      if(map[y+1][x]!==T_ROAD&&map[y+1][x]!==T_WATER&&map[y+1][x]!==T_OCEAN)map[y+1][x]=T_SW;
+      if(map[y-1][x]!==T_ROAD&&map[y-1][x]!==T_WATER&&map[y-1][x]!==T_OCEAN)map[y-1][x]=T_SW;
+    }
+  };
+  // Diagonal connectors through city/rural transition.
+  for(let t=0;t<1;t+=0.0025){
+    stampRoad(28+t*120,92+t*90,1);
+    stampRoad(205+t*92,84+t*118,1);
+  }
+  // Winding rural roads (sine-based meanders).
+  for(let x=2;x<MW-2;x++){
+    const y1=RURAL_Y+16+Math.sin(x*0.07)*10;
+    const y2=RURAL_Y+46+Math.sin(x*0.045+1.8)*14;
+    stampRoad(x,y1,1);
+    stampRoad(x,y2,1);
+  }
+  for(let y=RURAL_Y+2;y<BEACH_Y-5;y++){
+    const x1=42+Math.sin(y*0.06)*10;
+    const x2=230+Math.sin(y*0.05+1.2)*13;
+    stampRoad(x1,y,1);
+    stampRoad(x2,y,1);
+  }
 
   // Dedicated parking lots for parked traffic variety in both cities.
   const addParkingLot=(tx,ty,tw,th)=>{
@@ -492,6 +519,16 @@ function genMap(){
   bldgs.push({x:(MIL.x1+4)*TS,y:(MIL.y2-18)*TS,w:10*TS,h:10*TS,wall:'#4a5a30',roof:'#3a4a22',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'milstore'});
   genTrafficLights();
   placeSpecialLocs();
+  // Parking lots must stay open: remove/generated building overlap with lot footprints.
+  for(let i=bldgs.length-1;i>=0;i--){
+    const b=bldgs[i];
+    const overlap=parkingLots.some(l=>b.x<l.x+l.w&&b.x+b.w>l.x&&b.y<l.y+l.h&&b.y+b.h>l.y);
+    if(overlap)bldgs.splice(i,1);
+  }
+  // Re-stamp lots after building pass to guarantee clear pavement.
+  for(const l of parkingLots){
+    for(let y=(l.y/TS)|0;y<((l.y+l.h)/TS|0);y++)for(let x=(l.x/TS)|0;x<((l.x+l.w)/TS|0);x++)if(y>=0&&x>=0&&y<MH&&x<MW&&map[y][x]!==T_WATER&&map[y][x]!==T_OCEAN)map[y][x]=T_PARK2;
+  }
   // Ensure every building has a unique display name.
   for(let i=0;i<bldgs.length;i++)if(!bldgs[i].name)bldgs[i].name=buildingNameFromSeed(((bldgs[i].x+bldgs[i].y+i*17)|0));
 }
@@ -572,7 +609,7 @@ function addSpecialBuilding(spec){
     if(!existing.special&&rectsOverlap(existing,spec))bldgs.splice(i,1);
   }
   if(!spec.name){
-    const n={garage:"Jake's Garage",club:'Neon Club',drugden:'Drug Den',gunshop:'Ammu-Nation',airport:'Liberty Terminal',airport2:'Vice Terminal',hangar:'Air Hangar',milhangar:'Motor Pool',milbarracks:'Fort Barracks',milstore:'Supply Depot'}[spec.special]||buildingNameFromSeed((spec.x+spec.y)|0);
+    const n={garage:"Jake's Garage",club:'Neon Club',drugden:'Drug Den',gunshop:'Ammu-Nation',carshop:'Auto Gallery',airport:'Liberty Terminal',airport2:'Vice Terminal',hangar:'Air Hangar',milhangar:'Motor Pool',milbarracks:'Fort Barracks',milstore:'Supply Depot'}[spec.special]||buildingNameFromSeed((spec.x+spec.y)|0);
     spec.name=n;
   }
   bldgs.push(spec);
@@ -603,6 +640,9 @@ function placeSpecialLocs(){
     addSpecialBuilding({x,y,w,h,wall:'#744210',roof:'#553C2E',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'gunshop'});
     SPECIAL_LOCS.push({type:'gunshop',x,y,w,h,label:"AMMU-NATION &mdash; <b>F</b>:Pistol($300) <b>G</b>:Shotgun($500) <b>H</b>:Uzi($700)"});
   });
+  {const tx=62,ty=28,x=tx*TS,y=ty*TS,w=11*TS,h=7*TS;
+    addSpecialBuilding({x,y,w,h,wall:'#1f3b5d',roof:'#0f2338',floors:2,wsX:[],wsY:[],winW:[],sz:4,special:'carshop',name:'Prestige Autos'});
+    SPECIAL_LOCS.push({type:'carshop',x,y,w,h,label:"PRESTIGE AUTOS &mdash; <b>F</b>: Sports ($45k) <b>G</b>: Muscle ($25k) <b>H</b>: Luxury Sedan ($18k)"});}
   // City 1 Helipad & Airstrip
   SPECIAL_LOCS.push({type:'helipad',x:112*TS,y:35*TS,w:8*TS,h:8*TS,label:"HELIPAD &mdash; <b>F</b>: Spawn Helicopter"});
   SPECIAL_LOCS.push({type:'airstrip',x:AP1.x1*TS,y:(AP1.y1+2)*TS,w:(AP1.x2-AP1.x1)*TS,h:3*TS,label:"CITY 1 RUNWAY &mdash; <b>F</b>: Spawn Plane"});
@@ -632,6 +672,9 @@ function placeSpecialLocs(){
     addSpecialBuilding({x,y,w,h,wall:'#8B3010',roof:'#5C1A00',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'gunshop'});
     SPECIAL_LOCS.push({type:'gunshop',x,y,w,h,label:"AMMU-NATION &mdash; <b>F</b>:Pistol($300) <b>G</b>:Shotgun($500) <b>H</b>:Uzi($700)"});
   });
+  {const tx=236,ty=30,x=tx*TS,y=ty*TS,w=11*TS,h=7*TS;
+    addSpecialBuilding({x,y,w,h,wall:'#2a2a44',roof:'#17172e',floors:2,wsX:[],wsY:[],winW:[],sz:4,special:'carshop',name:'Vice Elite Motors'});
+    SPECIAL_LOCS.push({type:'carshop',x,y,w,h,label:"ELITE MOTORS &mdash; <b>F</b>: Sports ($45k) <b>G</b>: Muscle ($25k) <b>H</b>: Luxury Sedan ($18k)"});}
   // City 2 Helipad & Airstrip
   SPECIAL_LOCS.push({type:'helipad',x:290*TS,y:45*TS,w:8*TS,h:6*TS,label:"VICE HELIPAD &mdash; <b>F</b>: Spawn Helicopter"});
   SPECIAL_LOCS.push({type:'airstrip',x:AP2.x1*TS,y:(AP2.y1+2)*TS,w:(AP2.x2-AP2.x1)*TS,h:3*TS,label:"VICE CITY RUNWAY &mdash; <b>F</b>: Spawn Plane"});
@@ -1312,6 +1355,7 @@ const G={
   minimapZoom:1,
   minimapPanX:0,minimapPanY:0,
   minimapDrag:false,minimapLastX:0,minimapLastY:0,
+  minimapDragMoved:false,
   // Prevent immediate re-trigger when crossing door thresholds.
   buildingTransitionLock:0,
   // Mission state
@@ -1438,6 +1482,17 @@ function interactLoc(loc,key){
     if(key==='f'){if(G.money<300){notify('Need $300 for Pistol!',2000);return;}addMoney(-300);G.player.ammo.pistol+=30;if(G.player.weapon==='fists')G.player.weapon='pistol';sound('cash');notify('Bought Pistol ammo (+30)!',2500);G.player.updateWeaponHUD();}
     else if(key==='g'){if(G.money<500){notify('Need $500 for Shotgun!',2000);return;}addMoney(-500);G.player.ammo.shotgun+=12;if(G.player.weapon==='fists'||G.player.weapon==='pistol')G.player.weapon='shotgun';sound('cash');notify('Bought Shotgun ammo (+12)!',2500);G.player.updateWeaponHUD();}
     else if(key==='h'){if(G.money<700){notify('Need $700 for Uzi!',2000);return;}addMoney(-700);G.player.ammo.uzi+=80;if(G.player.weapon!=='uzi')G.player.weapon='uzi';sound('cash');notify('Bought Uzi ammo (+80)!',2500);G.player.updateWeaponHUD();}
+  } else if(loc.type==='carshop'){
+    const buy=(vtype,cost,msg)=>{
+      if(G.money<cost){notify('Need $'+cost+' for '+msg+'!',2000);return;}
+      addMoney(-cost);
+      const car=new Vehicle(loc.x+loc.w*0.5,loc.y+loc.h+14,vtype);
+      car.angle=0;G.entities.push(car);
+      notify('Purchased '+msg+'! Delivered outside.',2500);
+    };
+    if(key==='f')buy('sports',45000,'Sports Car');
+    else if(key==='g')buy('muscle',25000,'Muscle Car');
+    else if(key==='h')buy('car',18000,'Luxury Sedan');
   } else if(loc.type==='boatdock'){
     if(key==='f'){
       const boat=new Vehicle(loc.x+3*TS,loc.y+1*TS,'boat');boat.angle=0;
@@ -1505,15 +1560,23 @@ mmc.addEventListener('wheel',e=>{
   const dir=e.deltaY>0?-0.14:0.14;
   G.minimapZoom=clamp(G.minimapZoom+dir,0.6,3.2);
 },{passive:false});
-mmc.addEventListener('mousedown',e=>{G.minimapDrag=true;G.minimapLastX=e.clientX;G.minimapLastY=e.clientY;});
+mmc.addEventListener('mousedown',e=>{G.minimapDrag=true;G.minimapDragMoved=false;G.minimapLastX=e.clientX;G.minimapLastY=e.clientY;});
 window.addEventListener('mouseup',()=>G.minimapDrag=false);
 window.addEventListener('mousemove',e=>{
   if(!G.minimapDrag)return;
   const dx=e.clientX-G.minimapLastX,dy=e.clientY-G.minimapLastY;
+  if(Math.hypot(dx,dy)>2)G.minimapDragMoved=true;
   G.minimapLastX=e.clientX;G.minimapLastY=e.clientY;
   const span=2600/Math.max(0.6,G.minimapZoom);
   G.minimapPanX-=dx*(span/mmc.width);
   G.minimapPanY-=dy*(span/mmc.height);
+});
+mmc.addEventListener('click',()=>{
+  if(G.minimapDragMoved)return;
+  const steps=[0.8,1.1,1.5,2.1,3.0];
+  let i=steps.findIndex(z=>Math.abs(z-G.minimapZoom)<0.08);
+  if(i<0)i=0;
+  G.minimapZoom=steps[(i+1)%steps.length];
 });
 
 function cycleWeapon(){
@@ -2305,7 +2368,13 @@ function drawTiles(){
         if(x%4===0){ctx.strokeStyle='rgba(255,255,255,0.15)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(px+TS,py);ctx.lineTo(px+TS,py+TS);ctx.stroke();}
       } else if(t===T_BEACH){
         const bh=drugT?(tt*45+x)%360:42;
-        ctx.fillStyle=drugT?'hsl('+bh+',90%,60%)':'#C8A96E';ctx.fillRect(px,py,TS,TS);
+        const tideTiles=2+Math.sin(tt*0.7+x*0.05)*1.4;
+        const wetBand=y>=(OCEAN_Y-6-tideTiles);
+        ctx.fillStyle=drugT?'hsl('+bh+',90%,60%)':(wetBand?'#b89562':'#C8A96E');ctx.fillRect(px,py,TS,TS);
+        if(wetBand){
+          ctx.fillStyle='rgba(255,255,255,0.12)';
+          ctx.fillRect(px+2,py+TS*0.65,TS-4,2);
+        }
         if((x*3+y*2)%7===0){ctx.fillStyle=drugT?'rgba(255,0,100,0.4)':'rgba(200,180,100,0.5)';ctx.fillRect(px+R(2,10)|0,py+R(2,10)|0,4,4);}
       } else if(t===T_OCEAN){
         const oh=drugT?(tt*80+x*2)%360:210+Math.sin(x*0.2+tt*1.5)*8;
@@ -2453,9 +2522,9 @@ function drawBldgs(){
       ctx.fillStyle='#D4AF37';ctx.beginPath();ctx.arc(dX+dW-5,dY+dH/2,1.8,0,Math.PI*2);ctx.fill();
       // Illuminated sign above door for special buildings
       if(b.special){
-        const signBg={garage:'#1C6B38',club:Math.sin(tt*4)>0?'#44237A':'#6633A0',drugden:'#0D0A10',gunshop:'#7A3A10',milhangar:'#3a4a20',milbarracks:'#3a4a20',milstore:'#3a4a20'}[b.special]||'#222';
-        const signTxt={garage:'GARAGE',club:'NEON CLUB',drugden:'DRUG DEN',gunshop:'AMMU-NATION',airport:'AIRPORT',airport2:'AIRPORT',milhangar:'HANGAR',milbarracks:'BARRACKS',milstore:'ARMORY'}[b.special]||'';
-        const signCol={garage:'#00FF41',club:'#FF88FF',drugden:'#e040fb',gunshop:'#F6AD55'}[b.special]||'#aaa';
+        const signBg={garage:'#1C6B38',club:Math.sin(tt*4)>0?'#44237A':'#6633A0',drugden:'#0D0A10',gunshop:'#7A3A10',carshop:'#123047',milhangar:'#3a4a20',milbarracks:'#3a4a20',milstore:'#3a4a20'}[b.special]||'#222';
+        const signTxt={garage:'GARAGE',club:'NEON CLUB',drugden:'DRUG DEN',gunshop:'AMMU-NATION',carshop:'AUTO SHOP',airport:'AIRPORT',airport2:'AIRPORT',milhangar:'HANGAR',milbarracks:'BARRACKS',milstore:'ARMORY'}[b.special]||'';
+        const signCol={garage:'#00FF41',club:'#FF88FF',drugden:'#e040fb',gunshop:'#F6AD55',carshop:'#7dd3fc'}[b.special]||'#aaa';
         if(signTxt){
           ctx.fillStyle=signBg;ctx.fillRect(dX-12,dY-13,dW+24,12);
           ctx.strokeStyle='rgba(0,0,0,0.5)';ctx.lineWidth=1;ctx.strokeRect(dX-12,dY-13,dW+24,12);
@@ -2862,16 +2931,17 @@ function drawMinimap(){
     return {x:sz/2+dx*scale,y:sz/2+dy*scale};
   };
 
-  // Render local map window around the minimap center.
-  const worldStep=TS*2;
+  // Cleaner minimap style: draw roads/water/features only (no tile-grid checker look).
+  const worldStep=TS;
   for(let oy=-span/2;oy<span/2;oy+=worldStep){
     for(let ox=-span/2;ox<span/2;ox+=worldStep){
-      const wx=wrapCoord(centerX+ox,WORLD_W);
-      const wy=wrapCoord(centerY+oy,WORLD_H);
+      const wx=wrapCoord(centerX+ox,WORLD_W),wy=wrapCoord(centerY+oy,WORLD_H);
       const t=tileAt(wx,wy);
-      mmx.fillStyle=t===T_ROAD?'#555':t===T_BUILD?'#2a2a2a':t===T_WATER||t===T_OCEAN?'#1a4080':t===T_BEACH?'#8B7340':t===T_RUNWAY?'#888':t===T_PARK?'#1a4a15':t===T_MIL?'#3a4a20':'#2a3a22';
       const p=mapPoint(wx,wy);
-      mmx.fillRect(p.x,p.y,3,3);
+      if(t===T_WATER||t===T_OCEAN){mmx.fillStyle='rgba(36,94,170,0.68)';mmx.fillRect(p.x,p.y,2,2);}
+      else if(t===T_BEACH){mmx.fillStyle='rgba(198,160,96,0.38)';mmx.fillRect(p.x,p.y,2,2);}
+      else if(t===T_ROAD||t===T_RUNWAY){mmx.fillStyle='rgba(230,230,230,0.82)';mmx.fillRect(p.x,p.y,2,2);}
+      else if(t===T_MIL){mmx.fillStyle='rgba(110,150,90,0.55)';mmx.fillRect(p.x,p.y,2,2);}
     }
   }
 
@@ -2886,17 +2956,21 @@ function drawMinimap(){
   // Special locs on minimap.
   for(const loc of SPECIAL_LOCS){
     if(loc.type==='mission_giver')continue;
-    const col={garage:'#00FF41',nightclub:'#FC8181',drugden:'#e040fb',gunshop:'#F6AD55',boatdock:'#3182CE',helipad:'#FFD700',airstrip:'#fff',milairstrip:'#8f8',milbase:'#4a6'}[loc.type]||'#aaa';
+    const col={garage:'#00FF41',nightclub:'#FC8181',drugden:'#e040fb',gunshop:'#F6AD55',carshop:'#7dd3fc',boatdock:'#3182CE',helipad:'#FFD700',airstrip:'#fff',milairstrip:'#8f8',milbase:'#4a6'}[loc.type]||'#aaa';
     const p=mapPoint(loc.x,loc.y);
     mmx.fillStyle=col;mmx.fillRect(p.x-2,p.y-2,4,4);
   }
 
   // Mission waypoint.
+  let objectiveWorld=null;
   if(G.mission&&G.mission.state==='active'){
     let wx=null,wy=null;
     if(G.mission.type==='goto'&&G.mission.targetTile){wx=G.mission.targetTile.x*TS;wy=G.mission.targetTile.y*TS;}
     else if(G.mission.type==='steal_vehicle'&&G.player.inCar&&G.player.inCar.vtype===G.mission.vtype&&G.mission.deliverTile){wx=G.mission.deliverTile.x*TS;wy=G.mission.deliverTile.y*TS;}
-    if(wx!==null){const p=mapPoint(wx,wy);const a=0.5+Math.sin(G.time*0.005)*0.5;mmx.fillStyle='rgba(255,220,0,'+a+')';mmx.beginPath();mmx.arc(p.x,p.y,4,0,Math.PI*2);mmx.fill();}
+    if(wx!==null){
+      objectiveWorld={x:wx,y:wy};
+      const p=mapPoint(wx,wy);const a=0.5+Math.sin(G.time*0.005)*0.5;mmx.fillStyle='rgba(255,220,0,'+a+')';mmx.beginPath();mmx.arc(p.x,p.y,4,0,Math.PI*2);mmx.fill();
+    }
   }
 
   for(const e of G.entities){
@@ -2910,6 +2984,19 @@ function drawMinimap(){
 
   mmx.fillStyle='#ff3333';
   mmx.beginPath();mmx.arc(sz/2,sz/2,4,0,Math.PI*2);mmx.fill();
+
+  // Objective direction arrow (always points toward active objective).
+  if(objectiveWorld){
+    const dx=wrapDelta(centerX,objectiveWorld.x,WORLD_W),dy=wrapDelta(centerY,objectiveWorld.y,WORLD_H);
+    const ang=Math.atan2(dy,dx);
+    const r=sz*0.42;
+    const ax=sz/2+Math.cos(ang)*r,ay=sz/2+Math.sin(ang)*r;
+    mmx.save();
+    mmx.translate(ax,ay);mmx.rotate(ang);
+    mmx.fillStyle='rgba(255,210,0,0.95)';
+    mmx.beginPath();mmx.moveTo(8,0);mmx.lineTo(-6,-4.5);mmx.lineTo(-6,4.5);mmx.closePath();mmx.fill();
+    mmx.restore();
+  }
 
   // View heading + zoom ring UI.
   mmx.strokeStyle='rgba(255,255,255,0.3)';
