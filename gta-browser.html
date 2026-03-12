@@ -128,7 +128,7 @@ const R=(a,b)=>Math.random()*(b-a)+a;
 const RI=(a,b)=>Math.floor(R(a,b+1));
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const dst=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
-function tileAt(px,py){const tx=px/TS|0,ty=py/TS|0;if(tx<0||ty<0||tx>=MW||ty>=MH)return T_GRASS;return map[ty]?.[tx]??T_GRASS;}
+function tileAt(px,py){const tx=px/TS|0,ty=py/TS|0;if(px<0||py<0||tx>=MW||ty>=MH)return T_OCEAN;return map[ty]?.[tx]??T_OCEAN;}
 function drivable(px,py){const t=tileAt(px,py);return t===T_ROAD||t===T_SW||t===T_PARK2||t===T_RUNWAY||t===T_BEACH||t===T_MIL;}
 function npcDrivable(px,py){const t=tileAt(px,py);return t===T_ROAD||t===T_PARK2||t===T_RUNWAY||t===T_MIL;}
 function walkable(px,py){const t=tileAt(px,py);return t!==T_BUILD&&t!==T_WATER&&t!==T_OCEAN;}
@@ -2106,7 +2106,7 @@ function drawInterior(){
 
 function drawMinimap(){
   const sz=160;mmx.fillStyle='rgba(10,12,10,0.92)';mmx.fillRect(0,0,sz,sz);
-  const sc=sz/(MW*TS);
+  const sc=sz/(MH*TS);
   for(let y=0;y<MH;y+=2)for(let x=0;x<MW;x+=2){
     const t=map[y][x];
     mmx.fillStyle=t===T_ROAD?'#555':t===T_BUILD?'#2a2a2a':t===T_WATER||t===T_OCEAN?'#1a4080':t===T_BEACH?'#8B7340':t===T_RUNWAY?'#888':t===T_PARK?'#1a4a15':t===T_MIL?'#3a4a20':'#2a3a22';
