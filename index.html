@@ -156,7 +156,8 @@ function sound(type){
 const R=(a,b)=>Math.random()*(b-a)+a;
 const RI=(a,b)=>Math.floor(R(a,b+1));
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-const dst=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+// Wrapped world distance: entities remain spatially consistent across map seams.
+const dst=(a,b)=>Math.hypot(wrapDelta(a.x,b.x,WORLD_W),wrapDelta(a.y,b.y,WORLD_H));
 function tileAt(px,py){const tx=wrapCoord(px,WORLD_W)/TS|0,ty=wrapCoord(py,WORLD_H)/TS|0;return map[ty]?.[tx]??T_OCEAN;}
 function drivable(px,py){const t=tileAt(px,py);return t===T_ROAD||t===T_SW||t===T_PARK2||t===T_RUNWAY||t===T_BEACH||t===T_MIL;}
 function npcDrivable(px,py){const t=tileAt(px,py);return t===T_ROAD||t===T_PARK2||t===T_RUNWAY||t===T_MIL;}
@@ -176,6 +177,12 @@ function wrapDelta(from,to,max){
 function wrapEntityPosition(e){
   e.x=wrapCoord(e.x,WORLD_W);
   e.y=wrapCoord(e.y,WORLD_H);
+}
+function wrappedRenderPos(x,y){
+  return {
+    x:G.camera.x+wrapDelta(G.camera.x,x,WORLD_W),
+    y:G.camera.y+wrapDelta(G.camera.y,y,WORLD_H)
+  };
 }
 // Pick a road point near an anchor position so spawned traffic fades in naturally
 // around the player instead of appearing/disappearing at arbitrary map-wide points.
@@ -1879,7 +1886,8 @@ function update(dt){
     G.entities=G.entities.filter(e=>{
       if(!e.alive)return false;
       if(e instanceof Vehicle&&e.isNpc&&!e.isPol){
-        const d=Math.hypot(e.x-G.player.x,e.y-G.player.y);
+        // Use wrapped distance so seam-adjacent traffic is not incorrectly culled.
+        const d=dst(e,G.player);
         return d<2800;
       }
       return true;
@@ -2499,8 +2507,12 @@ function drawTrain(t){
 function drawBldgs(){
   const tt=G.time*0.001,drugT=G.drug.type==='trippy';
   for(const b of bldgs){
-    if(b.x-G.camera.x>canvas.width+20||b.x+b.w-G.camera.x<-20)continue;
-    if(b.y-G.camera.y>canvas.height+20||b.y+b.h-G.camera.y<-20)continue;
+    const rp=wrappedRenderPos(b.x,b.y);
+    const ox=rp.x-b.x,oy=rp.y-b.y;
+    if(rp.x-G.camera.x>canvas.width+20||rp.x+b.w-G.camera.x<-20)continue;
+    if(rp.y-G.camera.y>canvas.height+20||rp.y+b.h-G.camera.y<-20)continue;
+    // Render wrapped building copy nearest to the current camera.
+    b.x+=ox;b.y+=oy;
     // Shadow (offset south-east)
     ctx.fillStyle='rgba(0,0,0,0.35)';ctx.fillRect(b.x+6,b.y+6,b.w,b.h);
     // Wall
@@ -2575,7 +2587,7 @@ function drawBldgs(){
       // Doorknob
       ctx.fillStyle='#D4AF37';ctx.beginPath();ctx.arc(dX+dW-5,dY+dH/2,1.8,0,Math.PI*2);ctx.fill();
       // Illuminated sign above door for special buildings
-      if(b.special){
+    if(b.special){
         const signBg={garage:'#1C6B38',club:Math.sin(tt*4)>0?'#44237A':'#6633A0',drugden:'#0D0A10',gunshop:'#7A3A10',carshop:'#123047',milhangar:'#3a4a20',milbarracks:'#3a4a20',milstore:'#3a4a20'}[b.special]||'#222';
         const signTxt={garage:'GARAGE',club:'NEON CLUB',drugden:'DRUG DEN',gunshop:'AMMU-NATION',carshop:'AUTO SHOP',airport:'AIRPORT',airport2:'AIRPORT',milhangar:'HANGAR',milbarracks:'BARRACKS',milstore:'ARMORY'}[b.special]||'';
         const signCol={garage:'#00FF41',club:'#FF88FF',drugden:'#e040fb',gunshop:'#F6AD55',carshop:'#7dd3fc'}[b.special]||'#aaa';
@@ -2612,6 +2624,7 @@ function drawBldgs(){
       ctx.fillStyle=b.isVice?'#FF88FF':'#FFD700';ctx.font='bold 9px Courier New';ctx.textAlign='center';
       ctx.fillText((label.split(' ')[0]+' CENTER').slice(0,12),bx+bw/2,by+11);
     }
+    b.x-=ox;b.y-=oy;
   }
 }
 
@@ -2694,11 +2707,13 @@ function render(){
   ctx.globalAlpha=1;
 
   // Sort & draw entities
-  const vis=G.entities.filter(e=>{
-    if(!e.alive)return false;
-    const sx2=e.x-G.camera.x,sy2=e.y-G.camera.y;
-    return sx2>-100&&sx2<canvas.width+100&&sy2>-100&&sy2<canvas.height+100;
-  }).sort((a,b)=>a.y-b.y);
+  const vis=G.entities.map(e=>{
+    if(!e.alive)return null;
+    const rp=wrappedRenderPos(e.x,e.y);
+    const sx2=rp.x-G.camera.x,sy2=rp.y-G.camera.y;
+    if(!(sx2>-100&&sx2<canvas.width+100&&sy2>-100&&sy2<canvas.height+100))return null;
+    return {e,rp};
+  }).filter(Boolean).sort((a,b)=>a.rp.y-b.rp.y);
 
   // Draw mission waypoint marker in world
   if(G.mission&&G.mission.state==='active'){
@@ -2706,14 +2721,17 @@ function render(){
     if(G.mission.type==='goto'||G.mission.type==='visit'){{wx=G.mission.targetTile?G.mission.targetTile.x*TS:null;wy=G.mission.targetTile?G.mission.targetTile.y*TS:null;}}
     else if(G.mission.type==='steal_vehicle'&&G.player.inCar&&G.player.inCar.vtype===G.mission.vtype&&G.mission.deliverTile){wx=G.mission.deliverTile.x*TS;wy=G.mission.deliverTile.y*TS;}
     if(wx!==null){
-      const sx=wx-G.camera.x,sy=wy-G.camera.y;
+      const wp=wrappedRenderPos(wx,wy);
+      const sx=wp.x-G.camera.x,sy=wp.y-G.camera.y;
       const pulse=0.6+Math.sin(G.time*0.005)*0.4;
       ctx.fillStyle='rgba(255,200,0,'+pulse+')';
       ctx.beginPath();ctx.arc(sx,sy,14,0,Math.PI*2);ctx.fill();
       ctx.fillStyle='rgba(0,0,0,0.7)';ctx.font='bold 12px Arial';ctx.textAlign='center';ctx.fillText('★',sx,sy+4);
     }
   }
-  for(const e of vis){
+  for(const item of vis){
+    const e=item.e,oldX=e.x,oldY=e.y;
+    e.x=item.rp.x;e.y=item.rp.y;
     if(e instanceof Train)drawTrain(e);
     else if(e instanceof Vehicle)drawCar(e);
     else if(e instanceof Rocket)drawRocket(e);
@@ -2723,8 +2741,14 @@ function render(){
     else if(e instanceof BeachPed)drawBeachPed(e);
     else if(e instanceof CopOfficer)drawCop(e);
     else if(e instanceof MilSoldier)drawMilSoldier(e);
+    e.x=oldX;e.y=oldY;
   }
-  if(G.player.alive&&!G.player.inCar)drawPlayer();
+  if(G.player.alive&&!G.player.inCar){
+    const rp=wrappedRenderPos(G.player.x,G.player.y),ox=G.player.x,oy=G.player.y;
+    G.player.x=rp.x;G.player.y=rp.y;
+    drawPlayer();
+    G.player.x=ox;G.player.y=oy;
+  }
 
   ctx.restore();
   if(drugT)ctx.restore();
