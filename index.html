@@ -389,6 +389,35 @@ function addExplosion(x,y){
   for(let i=0;i<12;i++){const a=R(0,Math.PI*2),s=R(0.5,2);G.particles.push(new Particle(x,y,Math.cos(a)*s,Math.sin(a)*s,'#333',R(600,1200),R(6,12)));}
   G.fireCallT=R(7000,12000);
 }
+function addBloodStain(x,y,size=R(2.5,6),life=60000){
+  G.blood.push({x,y,size,life,maxLife:life});
+}
+function startBleeding(e,intensity=1){
+  if(!e||typeof e.hp!=='number'||!e.alive)return;
+  e.bleedRate=Math.max(e.bleedRate||0,intensity);
+  e.bleedTick=0;
+}
+function makeCorpse(e,kind='npc'){
+  // Bodies persist until delayed ambulance collection starts (>=5 minutes).
+  G.corpses.push({
+    x:e.x,y:e.y,kind,angle:e.angle||0,
+    tint:e.appearance?.shirt||'#8b8b8b',
+    created:G.time,
+    pickupAt:G.time+300000+R(0,120000),
+    picked:false
+  });
+  addBloodStain(e.x+R(-4,4),e.y+R(-4,4),R(5,9),60000);
+}
+function sendPlayerToJail(){
+  const jailX=28*TS,jailY=18*TS;
+  G.wanted=0;G.wantedScore=0;G.wantedCooldownT=0;updateWantedBar();
+  G.player.weapon='fists';G.player.ammo={pistol:0,shotgun:0,uzi:0};G.player.updateWeaponHUD();
+  G.player.inCar=null;
+  G.player.x=jailX+18;G.player.y=jailY+86;
+  G.camera.x=wrapCoord(G.player.x-canvas.width/2,WORLD_W);
+  G.camera.y=wrapCoord(G.player.y-canvas.height/2,WORLD_H);
+  notify('🚓 Arrested. Released outside police station. Weapons confiscated.',3000);
+}
 function notify(msg,dur=2200){const el=document.getElementById('notification');el.textContent=msg;el.style.opacity=1;clearTimeout(G._notifT);G._notifT=setTimeout(()=>el.style.opacity=0,dur);}
 function showLocHint(msg){const el=document.getElementById('loc-hint');el.innerHTML=msg;el.style.opacity=1;}
 function hideLocHint(){document.getElementById('loc-hint').style.opacity=0;}
@@ -819,7 +848,9 @@ class Pickup extends Entity{
   collect(){
     sound('pickup');
     if(this.type==='money'){addMoney(this.val);notify('+$'+this.val);}
-    else if(this.type==='health'){G.player.hp=Math.min(G.player.maxHp,G.player.hp+this.val);G.player.updateHpBar();}
+    else if(this.type==='health'){G.player.hp=Math.min(G.player.maxHp,G.player.hp+this.val);if(G.player.hp>G.player.maxHp*0.92)G.player.bleedRate=0;G.player.updateHpBar();}
+    else if(this.type==='food'){G.player.hp=Math.min(G.player.maxHp,G.player.hp+12);G.player.energy=Math.min(100,(G.player.energy||100)+35);G.player.updateHpBar();notify('🍔 Food restored energy',1300);}
+    else if(this.type==='drink'){G.player.hp=Math.min(G.player.maxHp,G.player.hp+8);G.player.energy=Math.min(100,(G.player.energy||100)+22);G.player.updateHpBar();notify('🥤 Drink restored energy',1300);}
     else if(this.type==='armor'){G.player.maxHp=Math.min(180,G.player.maxHp+50);G.player.hp=Math.min(G.player.maxHp,G.player.hp+50);notify('Armor +50',1500);}
     else if(['pistol','shotgun','uzi'].includes(this.type)){
       G.player.ammo[this.type]=(G.player.ammo[this.type]||0)+this.val;
@@ -1050,7 +1081,9 @@ class Ped extends Entity{
   hit(dmg,src){
     this.hp-=dmg;
     for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#e53e3e',300,3));
-    if(this.hp<=0){const m=RI(10,120);addMoney(m);notify('+$'+m);this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){G.kills++;addWanted(10,200);if(G.mission&&G.mission.type==='kill'){const inC2=this.x>CITY2_X1*TS;const inC1=this.x<CITY1_X2*TS;if(G.mission.area==='city2'&&inC2){G.mission.progress++;checkMission();}else if(G.mission.area==='city1'&&inC1){G.mission.progress++;checkMission();}else if(!G.mission.area){G.mission.progress++;checkMission();}}updateMissionObj();}}
+    addBloodStain(this.x+R(-3,3),this.y+R(-3,3),R(2.5,5.5),60000);
+    startBleeding(this,clamp((40-this.hp)/40,0.2,1));
+    if(this.hp<=0){const m=RI(10,120);addMoney(m);notify('+$'+m);makeCorpse(this,'ped');this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){G.kills++;addWanted(10,200);if(G.mission&&G.mission.type==='kill'){const inC2=this.x>CITY2_X1*TS;const inC1=this.x<CITY1_X2*TS;if(G.mission.area==='city2'&&inC2){G.mission.progress++;checkMission();}else if(G.mission.area==='city1'&&inC1){G.mission.progress++;checkMission();}else if(!G.mission.area){G.mission.progress++;checkMission();}}updateMissionObj();}}
   }
 }
 
@@ -1137,7 +1170,9 @@ class BeachPed extends Entity{
   hit(dmg){
     this.hp-=dmg;
     for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#e53e3e',300,3));
-    if(this.hp<=0)this.alive=false;
+    addBloodStain(this.x+R(-3,3),this.y+R(-3,3),R(2.5,5),60000);
+    startBleeding(this,clamp((35-this.hp)/35,0.2,1));
+    if(this.hp<=0){makeCorpse(this,'beach');this.alive=false;}
   }
 }
 
@@ -1147,6 +1182,7 @@ class CopOfficer extends Entity{
     super(x,y);this.r=9;this.spd=2.1;this.hp=60;
     this.appearance=randAppearance(true);
     this.walkFrame=RI(0,9);this.angle=0;this.atkT=0;this.shootT=0;this.stun=0;
+    this.warnT=0;this.warnCd=0;
     this.name='Officer '+seededName((x+y)|0,LAST_NAMES);this.cash=RI(15,120);this.inventory='Pistol';this.strength=7;this.stamina=8;
   }
   update(dt){
@@ -1156,11 +1192,23 @@ class CopOfficer extends Entity{
     const dx=G.player.x-this.x,dy=G.player.y-this.y;
     this.angle=Math.atan2(dy,dx);
     if(Math.random()<0.2)this.walkFrame=(this.walkFrame+1)%10;
+    const playerStill=!G.player.isMoving&&!G.player.inCar&&Math.abs(G.player.atkT||0)<1;
+    this.warnCd=Math.max(0,this.warnCd-dt);
+    // Arrest-first behavior for low/medium wanted levels when player complies.
+    if(G.wanted>0&&G.wanted<=3&&!G.player.inCar){
+      if(playerStill&&d<120){
+        this.warnT+=dt;
+        if(this.warnCd<=0){notify('👮 Police: DON\'T MOVE!',1200);this.warnCd=2200;}
+        const appSpd=this.spd*0.72;
+        if(d>16){const nx=this.x+Math.cos(this.angle)*appSpd,ny=this.y+Math.sin(this.angle)*appSpd;if(walkable(nx,ny)){this.x=nx;this.y=ny;}}
+        if(this.warnT>2400&&d<20){sendPlayerToJail();return;}
+      } else this.warnT=Math.max(0,this.warnT-dt*1.8);
+    }
     if(d>45){const nx=this.x+Math.cos(this.angle)*this.spd,ny=this.y+Math.sin(this.angle)*this.spd;if(walkable(nx,ny)){this.x=nx;this.y=ny;}}
     this.atkT-=dt;
     if(d<40&&this.atkT<=0){G.player.hit(8,this);this.atkT=500;}
     this.shootT-=dt;
-    if(G.wanted>=2&&d>40&&d<280&&this.shootT<=0){
+    if(G.wanted>=3&&d>40&&d<280&&this.shootT<=0){
       G.entities.push(new Bullet(this.x,this.y,this.angle+R(-0.08,0.08),20,this));
       sound('shoot');this.shootT=R(900,1600);
     }
@@ -1168,7 +1216,9 @@ class CopOfficer extends Entity{
   hit(dmg,src){
     this.hp-=dmg;this.stun=200;
     for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#4444ff',300,3));
-    if(this.hp<=0){this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){addWanted(18,200);}}
+    addBloodStain(this.x+R(-2,2),this.y+R(-2,2),R(2.5,5.5),60000);
+    startBleeding(this,clamp((60-this.hp)/60,0.2,1));
+    if(this.hp<=0){makeCorpse(this,'cop');this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){addWanted(18,200);}}
   }
 }
 
@@ -1219,7 +1269,10 @@ class MilSoldier extends Entity{
   hit(dmg,src){
     this.hp-=dmg;this.stun=180;
     for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#4a6a30',300,3));
+    addBloodStain(this.x+R(-2,2),this.y+R(-2,2),R(2.5,5.5),60000);
+    startBleeding(this,clamp((80-this.hp)/80,0.2,1));
     if(this.hp<=0){
+      makeCorpse(this,'soldier');
       this.alive=false;
       addMoney(RI(50,200));
       if(src===G.player||src instanceof Bullet&&src.owner===G.player){
@@ -1260,6 +1313,7 @@ class Player extends Entity{
   constructor(x,y){
     super(x,y);this.r=10;this.spd=2.6;this.angle=0;this.hp=100;this.maxHp=100;
     this.weapon='fists';this.ammo={pistol:30,shotgun:12,uzi:60};
+    this.energy=100;
     this.walkFrame=0;this.footT=0;this.running=false;
     this.appearance={skin:'#F1C27D',shirt:'#E53E3E',pants:'#2D3748',hair:'#1A202C'};
     this.inCar=null;this.atkT=0;this.punchT=0;this.hitFlash=0;
@@ -1271,7 +1325,9 @@ class Player extends Entity{
     if(K['w']||K['arrowup'])dy=-1;if(K['s']||K['arrowdown'])dy=1;
     if(K['a']||K['arrowleft'])dx=-1;if(K['d']||K['arrowright'])dx=1;
     this.running=(K['shift']&&(dx||dy));
-    const spMult=(G.drug&&G.drug.type==='speed'?2.2:1)*(this.running?1.8:1);
+    if(this.running&&this.energy>0)this.energy=Math.max(0,this.energy-dt*0.012);
+    const canSprint=this.running&&this.energy>3;
+    const spMult=(G.drug&&G.drug.type==='speed'?2.2:1)*(canSprint?1.8:1);
     const spd=this.spd*spMult;
     if(dx||dy){
       const n=nrm(dx,dy);
@@ -1283,6 +1339,14 @@ class Player extends Entity{
     }
     this.punchT=Math.max(0,this.punchT-dt);
     this.atkT=Math.max(0,this.atkT-dt);
+    this.isMoving=!!(dx||dy);
+    // Slow passive regen when standing still and safe.
+    if(!this.isMoving&&this.hp>0&&this.hp<this.maxHp&&G.wanted===0){
+      this.hp=Math.min(this.maxHp,this.hp+dt*0.0025);
+      if(this.hp>this.maxHp*0.92)this.bleedRate=0;
+      this.updateHpBar();
+    }
+    if(!this.isMoving)this.energy=Math.min(100,this.energy+dt*0.01);
   }
   attack(){
     // Vehicle-based attacks
@@ -1343,6 +1407,8 @@ class Player extends Entity{
     if(this.hp<=0)return;
     this.hp-=dmg;this.hitFlash=400;
     G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-3,0),'#ff4444',400,5));
+    addBloodStain(this.x+R(-3,3),this.y+R(-3,3),R(3,6),60000);
+    startBleeding(this,clamp((this.maxHp-this.hp)/this.maxHp,0.2,1));
     this.updateHpBar();
     if(this.hp<=0)G.playerDied();
   }
@@ -1433,6 +1499,7 @@ function showZoneLabel(txt){
 // Game state
 const G={
   player:null,entities:[],particles:[],
+  blood:[],corpses:[],
   money:0,wanted:0,wantedScore:0,wantedT:0,wantedDecayT:0,wantedCooldownT:0,
   time:0,kills:0,score:0,godMode:false,
   camera:{x:0,y:0},shake:0,
@@ -1721,6 +1788,57 @@ function nearestBuildingDoor(px,py,triggerDist=34){
   return best;
 }
 
+function updateMedicalSystems(dt){
+  // Persistent blood on the ground (1 minute default lifetime).
+  for(const b of G.blood){b.life-=dt;}
+  G.blood=G.blood.filter(b=>b.life>0);
+
+  const bleedTick=(ent,maxHp)=>{
+    if(!ent||!ent.alive||!(ent.bleedRate>0)||!(ent.hp>0))return;
+    ent.bleedTick=(ent.bleedTick||0)-dt;
+    if(ent.bleedTick>0)return;
+    const injury=clamp((maxHp-ent.hp)/Math.max(1,maxHp),0,1);
+    if(injury<0.12){ent.bleedRate=0;return;}
+    const rate=clamp((ent.bleedRate||0)*injury,0.16,1.2);
+    addBloodStain(ent.x+R(-4,4),ent.y+R(-4,4),R(2.2,3.8+injury*4),60000);
+    ent.bleedTick=R(1800,4200)/rate;
+  };
+  bleedTick(G.player,G.player.maxHp||100);
+  for(const e of G.entities){
+    if(e instanceof Ped)bleedTick(e,40);
+    else if(e instanceof BeachPed)bleedTick(e,35);
+    else if(e instanceof CopOfficer)bleedTick(e,60);
+    else if(e instanceof MilSoldier)bleedTick(e,80);
+  }
+
+  // Ambulance dispatch/collection: bodies persist at least 5 minutes before pickup.
+  for(const c of G.corpses){
+    if(c.picked||c.pickupAt>G.time)continue;
+    let medic=G.entities.find(e=>e instanceof Vehicle&&e.vtype==='ambulance'&&e.isMedic&&e.targetCorpse===c&&e.alive);
+    if(!medic){
+      const sp=roadNear(c.x,c.y,roadPts,260,760,65);
+      medic=new Vehicle(sp.x,sp.y,'ambulance');
+      medic.isNpc=true;medic.driver=medic;medic.isMedic=true;medic.targetCorpse=c;medic.npcTarget={x:c.x,y:c.y};
+      G.entities.push(medic);
+    }
+    if(medic&&dst(medic,c)<26){
+      c.picked=true;
+      addBloodStain(c.x+R(-2,2),c.y+R(-2,2),R(1.8,3.4),18000);
+      medic.npcRetire=true;medic.npcTarget=offscreenRoadTargetForDespawn(medic);
+    }
+  }
+  G.corpses=G.corpses.filter(c=>!c.picked);
+
+  // Nearby ambulance doctor heals injuries over time.
+  const doc=G.entities.find(e=>e instanceof Vehicle&&e.vtype==='ambulance'&&e.alive&&dst(e,G.player)<95);
+  if(doc&&G.player.hp<G.player.maxHp){
+    G.player.hp=Math.min(G.player.maxHp,G.player.hp+dt*0.012);
+    if(G.player.hp>G.player.maxHp*0.92)G.player.bleedRate=0;
+    G.player.updateHpBar();
+    if(Math.random()<0.02)notify('🩺 Ambulance medic is treating you.',900);
+  }
+}
+
 // Update loop
 function update(dt){
   if(!G.player.alive)return;
@@ -1892,6 +2010,7 @@ function update(dt){
   for(const e of G.entities){if(e.alive&&typeof e.x==='number'&&typeof e.y==='number')wrapEntityPosition(e);}
   wrapEntityPosition(G.player);
   for(const p of G.particles){if(p.alive)p.update(dt);}
+  updateMedicalSystems(dt);
   // NPC F-16 AI — fire rockets at player
   for(const e of G.entities){
     if(!e.alive||!e.isMilNpc||e.vtype!=='f16')continue;
@@ -2394,13 +2513,32 @@ function drawBullet(b){
 function drawPickup(p){
   const bob=Math.sin(p.bobT)*3;
   ctx.save();ctx.translate(p.x,p.y+bob);
-  const col=p.type==='money'?'rgba(0,255,80,0.3)':p.type==='health'?'rgba(255,50,50,0.3)':p.type==='armor'?'rgba(100,200,255,0.3)':'rgba(255,165,0,0.3)';
+  const col=p.type==='money'?'rgba(0,255,80,0.3)':p.type==='health'?'rgba(255,50,50,0.3)':p.type==='armor'?'rgba(100,200,255,0.3)':(p.type==='food'||p.type==='drink')?'rgba(255,220,120,0.35)':'rgba(255,165,0,0.3)';
   const gr=ctx.createRadialGradient(0,0,0,0,0,18);gr.addColorStop(0,col);gr.addColorStop(1,'transparent');
   ctx.fillStyle=gr;ctx.beginPath();ctx.arc(0,0,18,0,Math.PI*2);ctx.fill();
   ctx.font='14px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
-  const icons={money:'💰',health:'❤️',armor:'🛡️',pistol:'🔫',shotgun:'💥',uzi:'🔫'};
+  const icons={money:'💰',health:'❤️',armor:'🛡️',food:'🍔',drink:'🥤',pistol:'🔫',shotgun:'💥',uzi:'🔫'};
   ctx.fillText(icons[p.type]||'?',0,0);
   ctx.restore();
+}
+
+function drawGroundEffects(){
+  for(const b of G.blood){
+    const a=clamp(b.life/Math.max(1,b.maxLife),0,1);
+    const rp=wrappedRenderPos(b.x,b.y);
+    ctx.fillStyle='rgba(130,8,12,'+(0.2+0.45*a).toFixed(3)+')';
+    ctx.beginPath();ctx.ellipse(rp.x,rp.y,b.size,b.size*0.7,0,0,Math.PI*2);ctx.fill();
+    if(b.size>4){ctx.fillStyle='rgba(90,0,0,'+(0.22*a).toFixed(3)+')';ctx.fillRect(rp.x-b.size*0.5,rp.y-1,b.size,2);}
+  }
+  for(const c of G.corpses){
+    const rp=wrappedRenderPos(c.x,c.y);
+    ctx.save();ctx.translate(rp.x,rp.y);ctx.rotate(c.angle+Math.PI/2);
+    ctx.fillStyle='rgba(20,20,20,0.55)';ctx.beginPath();ctx.ellipse(0,9,10,6,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=c.tint;ctx.fillRect(-6,-4,12,8);
+    ctx.fillStyle='#222';ctx.fillRect(-9,0,18,4);
+    ctx.fillStyle='#d8b08a';ctx.beginPath();ctx.arc(0,-6,3.5,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  }
 }
 
 // Tile drawing
@@ -2711,6 +2849,7 @@ function render(){
   ctx.save();
   ctx.translate(-Math.floor(G.camera.x)+sx,-Math.floor(G.camera.y)+sy);
   drawTiles();
+  drawGroundEffects();
   drawRailNetwork();
   drawParkingLots();
   drawTrafficLights();
@@ -3262,6 +3401,8 @@ function init(){
   for(let i=0;i<30;i++){const rp=randCity1Road();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'money',RI(50,300)));}
   for(let i=0;i<20;i++){const rp=randCity2Road();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'money',RI(100,500)));}
   for(let i=0;i<20;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'health',25));}
+  for(let i=0;i<12;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'food',1));}
+  for(let i=0;i<12;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'drink',1));}
   for(let i=0;i<12;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'pistol',30));}
   for(let i=0;i<6;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'shotgun',8));}
   for(let i=0;i<6;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'uzi',40));}
