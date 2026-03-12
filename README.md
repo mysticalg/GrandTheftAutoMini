@@ -1,5 +1,7 @@
 # Great Escape Reimagined (Prototype)
 
+## ▶️ Play now: https://mysticalg.github.io/GrandTheftAutoMini/
+
 A browser-based isometric prison-escape simulation inspired by classic systems.
 
 ## Features implemented
