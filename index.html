@@ -445,7 +445,7 @@ function genMap(){
   for(let x=0;x<CITY1_X2;x++){const cx=x%CELL;if(cx===1||cx===2){if(BEACH_Y+2<MH)map[BEACH_Y-3][x]=T_ROAD;}}
   for(let x=CITY2_X1;x<MW;x++){const cx=x%CELL;if(cx===1||cx===2){if(BEACH_Y+2<MH)map[BEACH_Y-3][x]=T_ROAD;}}
 
-  // Carve long arterials + diagonal links to break up perfect grid feel.
+  // Carve extra arterials, but keep them strictly horizontal/vertical for now.
   const stampRoad=(tx,ty,w=1)=>{
     for(let oy=-w;oy<=w;oy++)for(let ox=-w;ox<=w;ox++){
       const x=(tx+ox)|0,y=(ty+oy)|0;
@@ -454,25 +454,18 @@ function genMap(){
       map[y][x]=T_ROAD;
       if(map[y+1][x]!==T_ROAD&&map[y+1][x]!==T_WATER&&map[y+1][x]!==T_OCEAN)map[y+1][x]=T_SW;
       if(map[y-1][x]!==T_ROAD&&map[y-1][x]!==T_WATER&&map[y-1][x]!==T_OCEAN)map[y-1][x]=T_SW;
+      if(map[y][x+1]!==T_ROAD&&map[y][x+1]!==T_WATER&&map[y][x+1]!==T_OCEAN)map[y][x+1]=T_SW;
+      if(map[y][x-1]!==T_ROAD&&map[y][x-1]!==T_WATER&&map[y][x-1]!==T_OCEAN)map[y][x-1]=T_SW;
     }
   };
-  // Diagonal connectors through city/rural transition.
-  for(let t=0;t<1;t+=0.0025){
-    stampRoad(28+t*120,92+t*90,1);
-    stampRoad(205+t*92,84+t*118,1);
+  // Rural/corridor arterials (orthogonal only).
+  const ruralRows=[RURAL_Y+14,RURAL_Y+30,RURAL_Y+48,RURAL_Y+64];
+  const ruralCols=[36,64,214,242];
+  for(const ry of ruralRows){
+    for(let x=2;x<MW-2;x++)stampRoad(x,ry,1);
   }
-  // Winding rural roads (sine-based meanders).
-  for(let x=2;x<MW-2;x++){
-    const y1=RURAL_Y+16+Math.sin(x*0.07)*10;
-    const y2=RURAL_Y+46+Math.sin(x*0.045+1.8)*14;
-    stampRoad(x,y1,1);
-    stampRoad(x,y2,1);
-  }
-  for(let y=RURAL_Y+2;y<BEACH_Y-5;y++){
-    const x1=42+Math.sin(y*0.06)*10;
-    const x2=230+Math.sin(y*0.05+1.2)*13;
-    stampRoad(x1,y,1);
-    stampRoad(x2,y,1);
+  for(const rx of ruralCols){
+    for(let y=RURAL_Y+2;y<BEACH_Y-4;y++)stampRoad(rx,y,1);
   }
 
   // Dedicated parking lots for parked traffic variety in both cities.
