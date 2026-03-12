@@ -2,22 +2,39 @@
 
 ## ▶️ Play now: https://mysticalg.github.io/GrandTheftAutoMini/
 
-A browser-based isometric prison-escape simulation inspired by classic systems.
+## About
+Great Escape Reimagined is a lightweight, browser-based isometric prison-escape prototype inspired by classic routine-and-risk sandbox games. You play as a prisoner balancing daily routine, stealth, and progression while trying to gather everything needed for a successful escape.
 
-## Features implemented
-- Isometric map with prison sections: sleeping quarters, mess hall, admin, solitude, yard, fences, and gate.
-- Day/night schedule with roll call, work detail, mess hall, free period, and lights out.
-- Auto routine mode toggle (`A`) that makes the player follow daily routine.
-- Guards with patrol routes and capture behavior (solitude punishment).
-- Morale flag meter that rises with progress and drops when caught/pressured.
-- Collectible escape items and win condition at exit gate.
-- Underground tunnel network with hatch travel (`E`).
-- Other prisoners moving around camp.
-- Night spotlights scanning yard.
-- Splash screen, UI badges, event log, inventory, procedural sprite-like visuals, and retro beeps.
+The simulation blends structured prison schedules (roll call, work detail, lights out) with emergent moments from patrols, spotlights, and NPC movement.
 
-## Run
-Open `index.html` directly or serve with:
+## Features
+- **Isometric prison map** with themed sections: sleeping quarters, mess hall, admin, solitude, yard, fences, and an exit gate.
+- **Living day/night cycle** with schedule phases: Roll Call, Work Detail, Mess Hall, Free Period, and Lights Out.
+- **Player movement + automation** with manual control and an auto-routine toggle.
+- **Guard patrol + capture loop** that punishes mistakes by sending you to solitude.
+- **Morale system** that rewards progress and drops under pressure.
+- **Collectible escape items** (e.g., tools/disguises/papers) needed before reaching the final gate.
+- **Tunnel hatch traversal** to move between key areas quickly.
+- **Ambient world activity** from roaming prisoners and nighttime spotlights.
+- **Retro UI + audio feedback** including badges, inventory, event log, and beep SFX.
+
+## Instructions
+### Objective
+1. Collect all required escape items.
+2. Reach the exit gate to complete the escape.
+
+### Controls
+- **Move:** `WASD` or Arrow Keys
+- **Toggle auto-routine:** `A`
+- **Use tunnel hatch (when standing on one):** `E`
+
+### Gameplay tips
+- During **Lights Out**, avoid spotlight sweeps to protect morale.
+- If a guard catches you, you are moved to solitude and lose morale.
+- Auto-routine can help you stay aligned with schedule windows before making your escape attempt.
+
+## Run locally
+Open `index.html` directly, or serve the folder with:
 
 ```bash
 python3 -m http.server 8000
@@ -26,8 +43,7 @@ python3 -m http.server 8000
 Then browse to `http://localhost:8000`.
 
 ## GitHub Pages deployment
-This repository now includes a GitHub Actions workflow at
-`.github/workflows/deploy-pages.yml` to automatically publish the static site.
+This repository includes a GitHub Actions workflow at `.github/workflows/deploy-pages.yml` to automatically publish the static site.
 
 ### One-time repository settings
 1. Push to the `main` branch (or trigger the workflow manually from Actions).
