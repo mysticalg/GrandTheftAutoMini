@@ -81,20 +81,22 @@ const PANTS_COLS=['#2D3748','#1A365D','#1C4532','#44337A','#742A2A','#234E52','#
 const HAIR_COLS=['#1A202C','#744210','#B7791F','#E53E3E','#805AD5','#F6E05E','#A0AEC0','#276749'];
 const SPORTS_COLS=['#FF0044','#FFCC00','#00FFAA','#FF6600','#CC00FF','#00CCFF','#FF3388'];
 const VEH_CFG={
-  car:    {w:32,h:18,mxS:4.2, acc:0.16,fr:0.93,trn:0.055,hp:200, name:'Car',    cols:CAR_COLS,sell:1200},
-  van:    {w:38,h:22,mxS:3.0, acc:0.11,fr:0.92,trn:0.042,hp:320, name:'Van',    cols:['#4A5568','#718096','#E2E8F0','#A0AEC0','#2D3748'],sell:1800},
-  truck:  {w:52,h:24,mxS:2.2, acc:0.07,fr:0.90,trn:0.032,hp:600, name:'Truck',  cols:['#744210','#975A16','#B7791F','#C05621','#D69E2E'],sell:3500},
-  bike:   {w:20,h:10,mxS:5.8, acc:0.24,fr:0.95,trn:0.10, hp:80,  name:'Bike',   cols:['#E53E3E','#1A202C','#F6AD55','#805AD5','#3182CE'],sell:900},
-  heli:   {w:44,h:28,mxS:5.0, acc:0.0, fr:0.96,trn:0.07, hp:300, name:'Heli',   cols:['#2D3748','#4A5568','#718096'],flies:true,sell:18000},
-  plane:  {w:64,h:18,mxS:9.0, acc:0.22,fr:0.99,trn:0.025,hp:400, name:'Plane',  cols:['#E2E8F0','#CBD5E0','#A0AEC0'],flies:true,sell:30000},
-  boat:   {w:38,h:16,mxS:3.8, acc:0.14,fr:0.91,trn:0.06, hp:180, name:'Boat',   cols:['#2B6CB0','#3182CE','#F6AD55','#DD6B20'],floats:true,sell:5000},
-  police: {w:32,h:18,mxS:4.8, acc:0.22,fr:0.93,trn:0.07, hp:280, name:'Police', cols:['#0f2b5a'],isPol:true,sell:0},
-  polheli:{w:44,h:28,mxS:5.5, acc:0.20,fr:0.96,trn:0.07, hp:350, name:'PolHeli',cols:['#0f2b5a'],flies:true,isPol:true,sell:0},
-  sports: {w:30,h:15,mxS:7.5, acc:0.30,fr:0.96,trn:0.075,hp:140, name:'Sports', cols:SPORTS_COLS,sell:45000},
-  muscle: {w:36,h:19,mxS:6.0, acc:0.25,fr:0.94,trn:0.060,hp:220, name:'Muscle', cols:['#CC2200','#332200','#220044','#004422'],sell:25000},
-  tank:   {w:56,h:30,mxS:1.6, acc:0.05,fr:0.88,trn:0.022,hp:3000,name:'Tank',   cols:['#4a5a30'],isMil:true,sell:0,hasCannon:true},
-  f16:    {w:60,h:16,mxS:13.0,acc:0.40,fr:0.995,trn:0.018,hp:600,name:'F-16',   cols:['#8a9a70'],flies:true,isMil:true,sell:0,hasRockets:true},
-  miljeep:{w:34,h:18,mxS:3.8, acc:0.14,fr:0.91,trn:0.058,hp:380, name:'MilJeep',cols:['#4a5a30'],isMil:true,sell:0},
+  // Handling model notes: higher mxS = faster top speed, lower acc = slower launch,
+  // higher fr = more momentum/coast (heavier vehicles take longer to slow down).
+  car:    {w:32,h:18,mxS:4.9, acc:0.18,fr:0.935,trn:0.055,hp:200, name:'Car',    cols:CAR_COLS,sell:1200},
+  van:    {w:38,h:22,mxS:3.6, acc:0.10,fr:0.955,trn:0.042,hp:320, name:'Van',    cols:['#4A5568','#718096','#E2E8F0','#A0AEC0','#2D3748'],sell:1800},
+  truck:  {w:52,h:24,mxS:3.0, acc:0.055,fr:0.972,trn:0.031,hp:600, name:'Truck',  cols:['#744210','#975A16','#B7791F','#C05621','#D69E2E'],sell:3500},
+  bike:   {w:20,h:10,mxS:6.6, acc:0.28,fr:0.95,trn:0.10, hp:80,  name:'Bike',   cols:['#E53E3E','#1A202C','#F6AD55','#805AD5','#3182CE'],sell:900},
+  heli:   {w:44,h:28,mxS:5.8, acc:0.0, fr:0.965,trn:0.07, hp:300, name:'Heli',   cols:['#2D3748','#4A5568','#718096'],flies:true,sell:18000},
+  plane:  {w:64,h:18,mxS:9.8, acc:0.24,fr:0.992,trn:0.025,hp:400, name:'Plane',  cols:['#E2E8F0','#CBD5E0','#A0AEC0'],flies:true,sell:30000},
+  boat:   {w:38,h:16,mxS:4.3, acc:0.15,fr:0.94,trn:0.06, hp:180, name:'Boat',   cols:['#2B6CB0','#3182CE','#F6AD55','#DD6B20'],floats:true,sell:5000},
+  police: {w:32,h:18,mxS:5.2, acc:0.23,fr:0.935,trn:0.07, hp:280, name:'Police', cols:['#0f2b5a'],isPol:true,sell:0},
+  polheli:{w:44,h:28,mxS:6.0, acc:0.21,fr:0.965,trn:0.07, hp:350, name:'PolHeli',cols:['#0f2b5a'],flies:true,isPol:true,sell:0},
+  sports: {w:30,h:15,mxS:8.4, acc:0.34,fr:0.965,trn:0.075,hp:140, name:'Sports', cols:SPORTS_COLS,sell:45000},
+  muscle: {w:36,h:19,mxS:6.8, acc:0.23,fr:0.955,trn:0.060,hp:220, name:'Muscle', cols:['#CC2200','#332200','#220044','#004422'],sell:25000},
+  tank:   {w:56,h:30,mxS:2.0, acc:0.04,fr:0.982,trn:0.021,hp:3000,name:'Tank',   cols:['#4a5a30'],isMil:true,sell:0,hasCannon:true},
+  f16:    {w:60,h:16,mxS:14.0,acc:0.42,fr:0.995,trn:0.018,hp:600,name:'F-16',   cols:['#8a9a70'],flies:true,isMil:true,sell:0,hasRockets:true},
+  miljeep:{w:34,h:18,mxS:4.4, acc:0.16,fr:0.93,trn:0.058,hp:380, name:'MilJeep',cols:['#4a5a30'],isMil:true,sell:0},
 };
 const WALK_CYCLE=[];
 for(let f=0;f<10;f++){const t=f/10*Math.PI*2;WALK_CYCLE.push([Math.sin(t)*0.55,Math.sin(t+Math.PI)*0.55,Math.sin(t+Math.PI)*0.32,Math.sin(t)*0.32]);}
