@@ -1674,13 +1674,18 @@ function drawRocket(r){
 
 // Vehicle rendering
 function drawCar(car){
-  ctx.save();ctx.translate(car.x,car.y);ctx.rotate(car.angle);
   const w=car.w,h=car.h,vt=car.vtype;
-  // Shadow
-  ctx.fillStyle='rgba(0,0,0,0.3)';ctx.fillRect(-w/2+3,-h/2+3,w,h);
-  // Body
-  ctx.fillStyle=car.col;ctx.fillRect(-w/2,-h/2,w,h);
-  ctx.fillStyle='rgba(255,255,255,0.1)';ctx.fillRect(-w/2,-h/2,w,h/3);
+  const isAircraft=vt==='heli'||vt==='polheli'||vt==='plane'||vt==='f16';
+  const isRoadVehicle=!isAircraft&&!car.floats;
+  // Vehicle sprites are authored facing -X while physics forward is +X, so flip road vehicles.
+  const renderAngle=car.angle+(isRoadVehicle?Math.PI:0);
+  ctx.save();ctx.translate(car.x,car.y);ctx.rotate(renderAngle);
+  // Keep soft rectangular base only for grounded boxy vehicles; skip for helis/planes so no opaque block appears.
+  if(isRoadVehicle||vt==='boat'){
+    ctx.fillStyle='rgba(0,0,0,0.3)';ctx.fillRect(-w/2+3,-h/2+3,w,h);
+    ctx.fillStyle=car.col;ctx.fillRect(-w/2,-h/2,w,h);
+    ctx.fillStyle='rgba(255,255,255,0.1)';ctx.fillRect(-w/2,-h/2,w,h/3);
+  }
 
   if(vt==='tank'){
     // Tank body (lower hull)
