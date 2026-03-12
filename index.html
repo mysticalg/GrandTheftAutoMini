@@ -296,27 +296,52 @@ function genBuilding(tx,ty,bw,bh,bx,by,isVice=false){
   bldgs.push({x:wx*TS,y:wy*TS,w:ww*TS,h:wh*TS,wall:wallC,roof:roofC,floors,wsX,wsY,winW,sz,isVice});
 }
 
+function rectsOverlap(a,b){
+  return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;
+}
+
+function carveDoorApproach(b){
+  // Keep a thin walkable apron at each building entrance so the player can always reach the door trigger.
+  const doorCx=((b.x+b.w/2)/TS)|0;
+  const doorTy=((b.y+b.h)/TS)|0;
+  for(let oy=-1;oy<=1;oy++)for(let ox=-1;ox<=1;ox++){
+    const tx=doorCx+ox,ty=doorTy+oy;
+    if(tx>=0&&ty>=0&&tx<MW&&ty<MH&&map[ty][tx]===T_BUILD)map[ty][tx]=T_SW;
+  }
+}
+
+function addSpecialBuilding(spec){
+  // Replace any generated base building that intersects this special building to avoid stacked roofs.
+  for(let i=bldgs.length-1;i>=0;i--){
+    const existing=bldgs[i];
+    if(!existing.special&&rectsOverlap(existing,spec))bldgs.splice(i,1);
+  }
+  bldgs.push(spec);
+  carveDoorApproach(spec);
+}
+
 function placeSpecialLocs(){
   // ── CITY 1 (Liberty City) ──
   // All positions use bx*14+6 pattern so they land on valid building tiles (never on roads/sidewalks)
   // Garages (city 1) - [tx=bx*14+6, ty=by*14+6]
   [[20,20],[48,76],[76,104]].forEach(([tx,ty])=>{
     const x=tx*TS,y=ty*TS,w=8*TS,h=6*TS;
-    bldgs.push({x,y,w,h,wall:'#276749',roof:'#1C4532',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'garage'});
+    addSpecialBuilding({x,y,w,h,wall:'#276749',roof:'#1C4532',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'garage'});
     SPECIAL_LOCS.push({type:'garage',x,y,w,h,label:"JAKE'S GARAGE &mdash; <b>F</b>: Sell Vehicle &nbsp;|&nbsp; <b>G</b>: Repair"});
   });
   // Nightclub (city 1) - ONE only
   {const tx=34,ty=34,x=tx*TS,y=ty*TS,w=10*TS,h=8*TS;
-    bldgs.push({x,y,w,h,wall:'#44337A',roof:'#322659',floors:2,wsX:[],wsY:[],winW:[],sz:4,special:'club',isClub:true});
+    addSpecialBuilding({x,y,w,h,wall:'#44337A',roof:'#322659',floors:2,wsX:[],wsY:[],winW:[],sz:4,special:'club',isClub:true});
     SPECIAL_LOCS.push({type:'nightclub',x,y,w,h,label:"NEON CLUB &mdash; <b>F</b>: Enter ($50) &mdash; Heals 30hp &amp; Speed Boost"});}
   // Drug Den (city 1) - ONE only, placed well clear of roads
   {const tx=48,ty=48,x=tx*TS,y=ty*TS,w=6*TS,h=6*TS;
-    bldgs.push({x,y,w,h,wall:'#1A202C',roof:'#0A0F0F',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'drugden'});
+    addSpecialBuilding({x,y,w,h,wall:'#1A202C',roof:'#0A0F0F',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'drugden'});
     SPECIAL_LOCS.push({type:'drugden',x,y,w,h,label:"DRUG DEN &mdash; <b>F</b>:Speed($200) <b>G</b>:Power($200) <b>H</b>:Trippy($300)"});}
   // Gun shops (city 1)
-  [[34,20],[62,62],[90,90]].forEach(([tx,ty])=>{
+  // Middle City 1 Ammu-Nation is placed in the reserved adjacent lot to avoid overlapping the neighboring tower.
+  [[34,20],[48,62],[90,90]].forEach(([tx,ty])=>{
     const x=tx*TS,y=ty*TS,w=7*TS,h=6*TS;
-    bldgs.push({x,y,w,h,wall:'#744210',roof:'#553C2E',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'gunshop'});
+    addSpecialBuilding({x,y,w,h,wall:'#744210',roof:'#553C2E',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'gunshop'});
     SPECIAL_LOCS.push({type:'gunshop',x,y,w,h,label:"AMMU-NATION &mdash; <b>F</b>:Pistol($300) <b>G</b>:Shotgun($500) <b>H</b>:Uzi($700)"});
   });
   // City 1 Helipad & Airstrip
@@ -329,23 +354,23 @@ function placeSpecialLocs(){
   // Garages (city 2)
   [[192,76],[248,118]].forEach(([tx,ty])=>{
     const x=tx*TS,y=ty*TS,w=8*TS,h=6*TS;
-    bldgs.push({x,y,w,h,wall:'#B7791F',roof:'#744210',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'garage'});
+    addSpecialBuilding({x,y,w,h,wall:'#B7791F',roof:'#744210',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'garage'});
     SPECIAL_LOCS.push({type:'garage',x,y,w,h,label:"VICE GARAGE &mdash; <b>F</b>: Sell Vehicle &nbsp;|&nbsp; <b>G</b>: Repair"});
   });
   // Nightclub (city 2) — neon/vice style
   {const tx=206,ty=76,x=tx*TS,y=ty*TS,w=10*TS,h=8*TS;
-    bldgs.push({x,y,w,h,wall:'#9B1B5A',roof:'#6B0050',floors:2,wsX:[],wsY:[],winW:[],sz:4,special:'club',isClub:true});
+    addSpecialBuilding({x,y,w,h,wall:'#9B1B5A',roof:'#6B0050',floors:2,wsX:[],wsY:[],winW:[],sz:4,special:'club',isClub:true});
     SPECIAL_LOCS.push({type:'nightclub',x,y,w,h,label:"VICE CLUB &mdash; <b>F</b>: Enter ($50) &mdash; Heals 30hp &amp; Speed Boost"});}
   // Drug dens (city 2) — 2 dens
   [[192,48],[234,90]].forEach(([tx,ty])=>{
     const x=tx*TS,y=ty*TS,w=6*TS,h=6*TS;
-    bldgs.push({x,y,w,h,wall:'#2D0020',roof:'#1A000F',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'drugden'});
+    addSpecialBuilding({x,y,w,h,wall:'#2D0020',roof:'#1A000F',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'drugden'});
     SPECIAL_LOCS.push({type:'drugden',x,y,w,h,label:"DRUG DEN &mdash; <b>F</b>:Speed($200) <b>G</b>:Power($200) <b>H</b>:Trippy($300)"});
   });
   // Gun shops (city 2)
   [[192,20],[220,62]].forEach(([tx,ty])=>{
     const x=tx*TS,y=ty*TS,w=7*TS,h=6*TS;
-    bldgs.push({x,y,w,h,wall:'#8B3010',roof:'#5C1A00',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'gunshop'});
+    addSpecialBuilding({x,y,w,h,wall:'#8B3010',roof:'#5C1A00',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'gunshop'});
     SPECIAL_LOCS.push({type:'gunshop',x,y,w,h,label:"AMMU-NATION &mdash; <b>F</b>:Pistol($300) <b>G</b>:Shotgun($500) <b>H</b>:Uzi($700)"});
   });
   // City 2 Helipad & Airstrip
@@ -1653,11 +1678,7 @@ function drawTiles(){
           if(isHorizOnly&&cy2===2&&x%2===0){ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px+TS,py);ctx.stroke();}
           if(isVertOnly&&cx2===2&&y%2===0){ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px,py+TS);ctx.stroke();}
           ctx.setLineDash([]);
-          // Intersection crosswalk marks (single tile height only — no bridge overlap)
-          if(!isVertOnly&&!isHorizOnly&&cy2===1&&cx2===1&&x%3===0){
-            ctx.fillStyle='rgba(255,255,255,0.28)';
-            for(let s=0;s<TS;s+=5)ctx.fillRect(px+s,py,3,TS);
-          }
+          // Intentionally no intersection crosswalk striping for the classic GTA1 look.
         } else {
           ctx.strokeStyle='rgba(255,0,255,0.7)';ctx.lineWidth=1.5;ctx.setLineDash([6,6]);
           const cx2b=x%CELL,cy2b=y%CELL;
