@@ -2554,7 +2554,6 @@ function drawTiles(){
         const tile=(tx,ty)=>map[(ty+MH)%MH]?.[(tx+MW)%MW];
         const isRoadish=(tx,ty)=>{const tt2=tile(tx,ty);return tt2===T_ROAD||tt2===T_RUNWAY||tt2===T_MIL;};
         const u=isRoadish(x,y-1),d=isRoadish(x,y+1),l=isRoadish(x-1,y),r=isRoadish(x+1,y);
-        const roads=(u?1:0)+(d?1:0)+(l?1:0)+(r?1:0);
         const horiz=l||r,vert=u||d;
         const cx=px+TS/2,cy=py+TS/2;
 
@@ -2570,24 +2569,6 @@ function drawTiles(){
         if(horiz&&!vert){ctx.beginPath();ctx.moveTo(px+2,cy);ctx.lineTo(px+TS-2,cy);ctx.stroke();}
         if(vert&&!horiz){ctx.beginPath();ctx.moveTo(cx,py+2);ctx.lineTo(cx,py+TS-2);ctx.stroke();}
 
-        // Curved segment styling: draw a dashed center arc and bright shoulder arcs
-        // so sine roads look like proper paved roads instead of blocky blobs.
-        const isCorner=roads===2&&horiz&&vert;
-        if(isCorner){
-          const ar=TS*0.5;
-          const cornerCX=l?px:px+TS;
-          const cornerCY=u?py:py+TS;
-          let a0=0,a1=0;
-          if(r&&d){a0=Math.PI;a1=Math.PI*1.5;}      // top-left corner
-          else if(l&&d){a0=Math.PI*1.5;a1=Math.PI*2;} // top-right corner
-          else if(r&&u){a0=Math.PI*0.5;a1=Math.PI;}   // bottom-left corner
-          else {a0=0;a1=Math.PI*0.5;}                 // bottom-right corner
-          ctx.strokeStyle='rgba(255,255,255,0.62)';ctx.lineWidth=2;ctx.setLineDash([]);
-          ctx.beginPath();ctx.arc(cornerCX,cornerCY,ar-2,a0,a1);ctx.stroke();
-          ctx.beginPath();ctx.arc(cornerCX,cornerCY,ar-12,a0,a1);ctx.stroke();
-          ctx.strokeStyle='rgba(255,200,0,0.82)';ctx.lineWidth=2;ctx.setLineDash([7,7]);
-          ctx.beginPath();ctx.arc(cornerCX,cornerCY,ar-7,a0,a1);ctx.stroke();
-        }
         ctx.setLineDash([]);
       }
     } else if(t===T_SW){
