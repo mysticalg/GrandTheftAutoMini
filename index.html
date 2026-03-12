@@ -173,17 +173,72 @@ function genTrafficLights(){
     }
   }
 }
-function npcShouldStopAtLight(v){
-  if(!v.isNpc||v.vtype==='bike'||v.floats||v.flies)return false;
-  const look=28;
-  const fx=v.x+Math.cos(v.angle)*look,fy=v.y+Math.sin(v.angle)*look;
-  for(const light of trafficLights){
-    if(Math.hypot(fx-light.x,fy-light.y)>22)continue;
-    const st=trafficLightState(light,G.time);
-    const axis=Math.abs(Math.cos(v.angle))>Math.abs(Math.sin(v.angle))?'ew':'ns';
-    if(st[axis]!=='go')return true;
+function roadOrientationAt(px,py){
+  if(tileAt(px,py)!==T_ROAD)return null;
+  const tx=px/TS|0,ty=py/TS|0,cx=tx%CELL,cy=ty%CELL;
+  const v=(cx===1||cx===2),h=(cy===1||cy===2);
+  if(v&&h)return 'intersection';
+  if(v)return 'vertical';
+  if(h)return 'horizontal';
+  return null;
+}
+function nearestRoadPoint(px,py,samples=36){
+  if(!roadPts.length)return{x:px,y:py,d:0};
+  let best=roadPts[RI(0,roadPts.length-1)],bestD=Math.hypot(best.x-px,best.y-py);
+  for(let i=0;i<samples;i++){
+    const rp=roadPts[RI(0,roadPts.length-1)];
+    const d=Math.hypot(rp.x-px,rp.y-py);
+    if(d<bestD){best=rp;bestD=d;}
   }
-  return false;
+  return{x:best.x,y:best.y,d:bestD};
+}
+// Keep NPC traffic aligned to lane centers instead of randomly turning into sidewalks.
+function npcLaneGuide(v){
+  const orient=roadOrientationAt(v.x,v.y)||roadOrientationAt(v.x+Math.cos(v.angle)*20,v.y+Math.sin(v.angle)*20);
+  if(!orient)return null;
+  let axis=Math.abs(Math.cos(v.angle))>=Math.abs(Math.sin(v.angle))?'ew':'ns';
+  if(orient==='horizontal')axis='ew';
+  else if(orient==='vertical')axis='ns';
+  else if(orient==='intersection'){
+    if(!v.npcInIntersection){
+      const wantTurn=Math.random()<0.2;
+      v.npcLaneAxis=wantTurn?(v.npcLaneAxis==='ew'?'ns':'ew'):(v.npcLaneAxis||axis);
+    }
+    axis=v.npcLaneAxis||axis;
+  }
+  const tx=v.x/TS|0,ty=v.y/TS|0;
+  const dirX=Math.cos(v.angle)>=0?1:-1,dirY=Math.sin(v.angle)>=0?1:-1;
+  const look=96;
+  if(axis==='ew'){
+    const laneY=ty*TS+(dirX>0?TS*0.68:TS*0.32);
+    return{x:v.x+dirX*look,y:laneY,axis,isIntersection:orient==='intersection'};
+  }
+  const laneX=tx*TS+(dirY>0?TS*0.68:TS*0.32);
+  return{x:laneX,y:v.y+dirY*look,axis,isIntersection:orient==='intersection'};
+}
+function npcShouldStopAtLight(v,lane){
+  if(!v.isNpc||v.vtype==='bike'||v.floats||v.flies)return null;
+  const axis=lane?.axis||(Math.abs(Math.cos(v.angle))>Math.abs(Math.sin(v.angle))?'ew':'ns');
+  const dirX=Math.cos(v.angle)>=0?1:-1,dirY=Math.sin(v.angle)>=0?1:-1;
+  let best=null,bestDist=1e9,bestState='go';
+  for(const light of trafficLights){
+    const st=trafficLightState(light,G.time);
+    if(axis==='ew'){
+      const along=(light.x-v.x)*dirX,lateral=Math.abs(light.y-v.y);
+      if(along<0||along>220||lateral>22)continue;
+      if(along<bestDist){bestDist=along;best=light;bestState=st.ew;}
+    }else{
+      const along=(light.y-v.y)*dirY,lateral=Math.abs(light.x-v.x);
+      if(along<0||along>220||lateral>22)continue;
+      if(along<bestDist){bestDist=along;best=light;bestState=st.ns;}
+    }
+  }
+  if(!best)return null;
+  const brakeDecel=Math.max(0.06,v.acc*1.6);
+  const speed=Math.abs(v.spd);
+  const stopDist=(speed*speed)/(2*brakeDecel)+v.w*0.8+8;
+  const shouldStop=bestState==='stop'||(bestState==='caution'&&bestDist>Math.max(18,stopDist*0.72));
+  return{shouldStop,dist:bestDist,state:bestState,stopDist};
 }
 function addExplosion(x,y){
   for(let i=0;i<55;i++){const a=R(0,Math.PI*2),s=R(1.5,6);G.particles.push(new Particle(x,y,Math.cos(a)*s,Math.sin(a)*s,i<35?'hsl('+(RI(0,40))+',100%,'+(RI(45,65))+'%)':'#888',R(400,900),R(3,9)));}
@@ -541,6 +596,7 @@ class Vehicle extends Entity{
     this.flies=!!cfg.flies;this.floats=!!cfg.floats;this.isPol=!!cfg.isPol;
     this.spd=0;this.angle=0;this.driver=null;this.isNpc=false;
     this.npcTarget=null;this.stuckT=0;this.lastX=x;this.lastY=y;
+    this.npcLaneAxis=null;this.npcInIntersection=false;
     this.smokeDmg=0;this.sirenT=0;this.rotorA=0;this.altitude=this.flies?60:0;
     this._exploded=false;
   }
@@ -599,12 +655,13 @@ class Vehicle extends Entity{
       const ny=this.y+Math.sin(this.angle)*this.spd;
       if(this.canMove(nx,ny)){this.x=nx;this.y=ny;}
       else{
-        this.spd*=-0.15;
-        // For NPC cars, turn toward nearest road rather than random
-        if(this.isNpc&&this.npcTarget){
-          const tx=this.npcTarget.x-this.x,ty=this.npcTarget.y-this.y;
-          this.angle=Math.atan2(ty,tx)+R(-0.4,0.4);
+        // NPCs should correct back toward lane center instead of bouncing into pavement.
+        if(this.isNpc){
+          this.spd=Math.max(0,this.spd*0.45);
+          const rp=nearestRoadPoint(this.x,this.y,42);
+          this.angle=Math.atan2(rp.y-this.y,rp.x-this.x);
         } else {
+          this.spd*=-0.15;
           this.angle+=R(0.2,0.6)*(Math.random()>0.5?1:-1);
         }
       }
@@ -627,24 +684,50 @@ class Vehicle extends Entity{
   }
   updateNpc(dt){
     if(!this.npcTarget)this.npcTarget=randRoad();
-    // If stuck inside a building, teleport to road
-    if(tileAt(this.x,this.y)===T_BUILD){
-      const rp=randRoad();this.x=rp.x;this.y=rp.y;this.spd=0;this.npcTarget=randRoad();return;
-    }
-    const dx=this.npcTarget.x-this.x,dy=this.npcTarget.y-this.y;
-    let ang=Math.atan2(dy,dx),diff=ang-this.angle;
-    while(diff>Math.PI)diff-=Math.PI*2;while(diff<-Math.PI)diff+=Math.PI*2;
-    if(Math.abs(diff)>0.06)this.angle+=Math.sign(diff)*Math.min(this.trn*0.85,Math.abs(diff));
-    this.spd=Math.min(this.spd+this.acc*0.4,this.mxS*0.62);
-    // Obey timed traffic signals at crossroads.
-    if(npcShouldStopAtLight(this)){
-      this.spd*=0.78;
-      if(Math.abs(this.spd)<0.05)this.spd=0;
+    // If outside drivable road, recover toward nearest road center first.
+    if(!npcDrivable(this.x,this.y)||tileAt(this.x,this.y)===T_BUILD){
+      const rp=nearestRoadPoint(this.x,this.y,48);
+      this.angle=Math.atan2(rp.y-this.y,rp.x-this.x);
+      this.spd=Math.min(this.spd+this.acc*0.25,this.mxS*0.35);
+      this.npcTarget={x:rp.x,y:rp.y};
       return;
     }
-    if(Math.hypot(dx,dy)<50){this.npcTarget=randRoad();}
-    // Avoid player
-    if(G.wanted>2&&dst(this,G.player)<120){const ax=this.x-G.player.x,ay=this.y-G.player.y;this.angle=Math.atan2(ay,ax);this.spd=Math.min(this.spd+0.1,this.mxS*0.8);}
+
+    const lane=npcLaneGuide(this);
+    const target=lane||this.npcTarget;
+    if(lane){
+      this.npcLaneAxis=lane.axis;
+      this.npcInIntersection=!!lane.isIntersection;
+      this.npcTarget=lane;
+    } else {
+      this.npcInIntersection=false;
+    }
+
+    const dx=target.x-this.x,dy=target.y-this.y;
+    let ang=Math.atan2(dy,dx),diff=ang-this.angle;
+    while(diff>Math.PI)diff-=Math.PI*2;while(diff<-Math.PI)diff+=Math.PI*2;
+    const steerLimit=this.trn*(lane?0.72:0.9);
+    if(Math.abs(diff)>0.02)this.angle+=Math.sign(diff)*Math.min(steerLimit,Math.abs(diff));
+
+    // Respect vehicle handling limits: heavy/slow vehicles should brake earlier.
+    const lightControl=npcShouldStopAtLight(this,lane);
+    if(lightControl&&lightControl.shouldStop){
+      const brakePower=Math.max(0.05,this.acc*0.95);
+      const targetSpeed=lightControl.dist<14?0:Math.min(this.mxS*0.28,lightControl.dist/Math.max(30,lightControl.stopDist)*this.mxS*0.4);
+      this.spd=Math.max(targetSpeed,this.spd-brakePower);
+      if(this.spd<0.03)this.spd=0;
+      return;
+    }
+
+    this.spd=Math.min(this.spd+this.acc*0.38,this.mxS*(lane?0.58:0.52));
+    if(Math.hypot(dx,dy)<34)this.npcTarget=randRoad();
+
+    // Avoid player when police heat is high.
+    if(G.wanted>2&&dst(this,G.player)<120){
+      const ax=this.x-G.player.x,ay=this.y-G.player.y;
+      this.angle=Math.atan2(ay,ax);
+      this.spd=Math.min(this.spd+0.08,this.mxS*0.75);
+    }
   }
   updatePolice(dt){
     const tgt=G.player.inCar||G.player;
