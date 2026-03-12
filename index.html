@@ -198,7 +198,12 @@ function genMap(){
       else if(cx===0||cx===3||cy===0||cy===3)map[y][x]=T_SW;
       else if(bs<3)map[y][x]=T_PARK;
       else if(bs<5)map[y][x]=T_PARK2;
-      else map[y][x]=T_BUILD;
+      else {
+        // Keep a one-tile sidewalk ring around each building lot so entries are approachable
+        // and we avoid a blocked dark moat around roofs.
+        const inBuildingCore=(cx>=5&&cx<=12&&cy>=5&&cy<=12);
+        map[y][x]=inBuildingCore?T_BUILD:T_SW;
+      }
     }
   }
   // City 1 river bridges
@@ -301,7 +306,15 @@ function rectsOverlap(a,b){
 }
 
 function carveDoorApproach(b){
-  // Keep a thin walkable apron at each building entrance so the player can always reach the door trigger.
+  // Keep sidewalks around/near special buildings so players can line up with entrances reliably.
+  const left=((b.x/TS)|0)-1,right=(((b.x+b.w)/TS)|0)+1;
+  const top=((b.y/TS)|0)-1,bottom=(((b.y+b.h)/TS)|0)+1;
+  for(let ty=top;ty<=bottom;ty++)for(let tx=left;tx<=right;tx++){
+    if(tx<0||ty<0||tx>=MW||ty>=MH)continue;
+    const onPerimeter=(tx===left||tx===right||ty===top||ty===bottom);
+    if(onPerimeter&&map[ty][tx]===T_BUILD)map[ty][tx]=T_SW;
+  }
+  // Additional apron right at the door trigger position.
   const doorCx=((b.x+b.w/2)/TS)|0;
   const doorTy=((b.y+b.h)/TS)|0;
   for(let oy=-1;oy<=1;oy++)for(let ox=-1;ox<=1;ox++){
