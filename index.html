@@ -15,8 +15,8 @@ body { background:#000; overflow:hidden; font-family:"Courier New",monospace; }
 #hp-label { color:#ccc; font-size:11px; letter-spacing:2px; margin-bottom:4px; text-shadow:1px 1px #000; }
 #hp-wrap { width:200px; height:14px; background:rgba(0,0,0,0.5); border:1px solid #555; border-radius:2px; overflow:hidden; }
 #hp-fill { height:100%; background:#38A169; transition:width 0.2s; border-radius:2px; }
-#minimap-wrap { position:absolute; bottom:20px; right:20px; border:2px solid #444; }
-#minimap { display:block; }
+#minimap-wrap { position:absolute; bottom:20px; right:20px; width:220px; height:220px; border:2px solid #444; border-radius:50%; overflow:hidden; box-shadow:0 0 16px rgba(0,0,0,0.45); pointer-events:auto; }
+#minimap { display:block; width:220px; height:220px; pointer-events:auto; }
 #message { position:absolute; top:40%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:30px; font-weight:bold; text-shadow:0 0 20px rgba(255,200,0,0.8); text-align:center; letter-spacing:3px; opacity:0; transition:opacity 0.3s; pointer-events:none; }
 #controls-hint { position:absolute; bottom:24px; left:50%; transform:translateX(-50%); color:rgba(255,255,255,0.5); font-size:11px; text-align:center; letter-spacing:1px; }
 #score-info { position:absolute; top:80px; right:20px; color:#aaa; font-size:12px; text-align:right; }
@@ -44,14 +44,14 @@ body { background:#000; overflow:hidden; font-family:"Courier New",monospace; }
   <div id="weapon-info">&#x1F44A; Fists</div>
   <div id="score-info"></div>
   <div id="drug-bar"><div id="drug-label">DRUG</div><div id="drug-wrap"><div id="drug-fill" style="width:100%"></div></div></div>
-  <div id="minimap-wrap"><canvas id="minimap" width="160" height="160"></canvas></div>
+  <div id="minimap-wrap"><canvas id="minimap" width="220" height="220"></canvas></div>
   <div id="hp-container"><div id="hp-label">HEALTH</div><div id="hp-wrap"><div id="hp-fill" style="width:100%"></div></div></div>
   <div id="message"></div>
   <div id="notification"></div>
   <div id="loc-hint"></div>
   <div id="zone-label"></div>
   <div id="mission-panel"><div id="mission-title"></div><div id="mission-desc"></div><div id="mission-obj"></div></div>
-  <div id="controls-hint">WASD:Move/Steer | 🚪 Auto Enter/Exit Buildings | E:Vehicle Enter/Exit | Q:Alt+ Z:Alt- | SPACE:Attack | SHIFT:Sprint | F:Interact | G:Repair | H:Drug | R:Respawn | M:Next Mission</div>
+  <div id="controls-hint">WASD:Move/Steer | 🚪 Auto Enter/Exit Buildings | E:Vehicle Enter/Exit | 🗺️ Minimap: Wheel Zoom + Drag Pan | Q:Alt+ Z:Alt- | SPACE:Attack | SHIFT:Sprint | F:Interact | G:Repair | H:Drug | R:Respawn | M:Next Mission</div>
   <div id="altitude-bar" style="position:absolute;top:16px;left:50%;transform:translateX(-50%);color:#adf;font-size:13px;font-weight:bold;text-shadow:1px 1px #000;display:none;background:rgba(0,0,0,0.55);padding:4px 14px;border-radius:6px;letter-spacing:1px;"></div>
 </div>
 <div id="wasted-screen"><div id="wasted-text">WASTED</div><div id="wasted-sub">Press R to Respawn</div></div>
@@ -62,6 +62,8 @@ const canvas=document.getElementById('gc'),ctx=canvas.getContext('2d');
 const mmc=document.getElementById('minimap'),mmx=mmc.getContext('2d');
 canvas.width=window.innerWidth; canvas.height=window.innerHeight;
 const TS=32,MW=320,MH=340,CELL=14;
+const WORLD_W=MW*TS,WORLD_H=MH*TS;
+const parkingLots=[];
 // Zone boundaries (in tiles)
 const CITY1_X2=140;  // City 1 (Liberty City) east edge
 const CITY2_X1=178;  // City 2 (Vice City) west edge
@@ -133,7 +135,7 @@ const R=(a,b)=>Math.random()*(b-a)+a;
 const RI=(a,b)=>Math.floor(R(a,b+1));
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const dst=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
-function tileAt(px,py){const tx=px/TS|0,ty=py/TS|0;if(px<0||py<0||tx>=MW||ty>=MH)return T_OCEAN;return map[ty]?.[tx]??T_OCEAN;}
+function tileAt(px,py){const tx=wrapCoord(px,WORLD_W)/TS|0,ty=wrapCoord(py,WORLD_H)/TS|0;return map[ty]?.[tx]??T_OCEAN;}
 function drivable(px,py){const t=tileAt(px,py);return t===T_ROAD||t===T_SW||t===T_PARK2||t===T_RUNWAY||t===T_BEACH||t===T_MIL;}
 function npcDrivable(px,py){const t=tileAt(px,py);return t===T_ROAD||t===T_PARK2||t===T_RUNWAY||t===T_MIL;}
 function walkable(px,py){const t=tileAt(px,py);return t!==T_BUILD&&t!==T_WATER&&t!==T_OCEAN;}
@@ -142,6 +144,17 @@ function onWater(px,py){const t=tileAt(px,py);return t===T_OCEAN||t===T_WATER;}
 function randRoad(){return roadPts[RI(0,roadPts.length-1)]||{x:1200,y:1200};}
 function randCity1Road(){return city1RoadPts.length?city1RoadPts[RI(0,city1RoadPts.length-1)]:randRoad();}
 function randCity2Road(){return city2RoadPts.length?city2RoadPts[RI(0,city2RoadPts.length-1)]:randRoad();}
+function wrapCoord(v,max){v%=max;return v<0?v+max:v;}
+function wrapDelta(from,to,max){
+  let d=to-from;
+  if(d>max/2)d-=max;
+  else if(d<-max/2)d+=max;
+  return d;
+}
+function wrapEntityPosition(e){
+  e.x=wrapCoord(e.x,WORLD_W);
+  e.y=wrapCoord(e.y,WORLD_H);
+}
 // Pick a road point near an anchor position so spawned traffic fades in naturally
 // around the player instead of appearing/disappearing at arbitrary map-wide points.
 function roadNear(px,py,pool,minD=480,maxD=1600,samples=60){
@@ -186,6 +199,20 @@ function spawnNpcTrafficVehicle(vtype,pool,targetChooser,anchorX,anchorY){
     return true;
   }
   return false;
+}
+function spawnParkedCarsInLot(lot,count=10){
+  const parkedTypes=['car','car','van','truck','muscle','sports','bike'];
+  for(let i=0;i<count;i++){
+    const px=lot.x+16+R(0,Math.max(12,lot.w-32));
+    const py=lot.y+16+R(0,Math.max(12,lot.h-32));
+    if(!canSpawnNpcTrafficAt(px,py,26))continue;
+    const vt=parkedTypes[RI(0,parkedTypes.length-1)];
+    const parked=new Vehicle(px,py,vt);
+    parked.angle=(lot.w>=lot.h)?(Math.random()<0.5?0:Math.PI):(Math.random()<0.5?Math.PI/2:-Math.PI/2);
+    // Parked by default (driver null) so player can still enter and steal them.
+    parked.isParked=true;
+    G.entities.push(parked);
+  }
 }
 function inCity2Zone(){return G.player&&G.player.x>CITY2_X1*TS&&G.player.y<RURAL_Y*TS;}
 function inMilBase(){return G.player&&G.player.x>MIL.x1*TS&&G.player.x<MIL.x2*TS&&G.player.y>MIL.y1*TS&&G.player.y<MIL.y2*TS;}
@@ -371,6 +398,19 @@ function genMap(){
   // Beach road access
   for(let x=0;x<CITY1_X2;x++){const cx=x%CELL;if(cx===1||cx===2){if(BEACH_Y+2<MH)map[BEACH_Y-3][x]=T_ROAD;}}
   for(let x=CITY2_X1;x<MW;x++){const cx=x%CELL;if(cx===1||cx===2){if(BEACH_Y+2<MH)map[BEACH_Y-3][x]=T_ROAD;}}
+
+  // Dedicated parking lots for parked traffic variety in both cities.
+  const addParkingLot=(tx,ty,tw,th)=>{
+    for(let y=ty;y<ty+th;y++)for(let x=tx;x<tx+tw;x++){
+      if(x>0&&y>0&&x<MW&&y<MH&&map[y]?.[x]!==T_WATER&&map[y]?.[x]!==T_OCEAN)map[y][x]=T_PARK2;
+    }
+    parkingLots.push({x:tx*TS,y:ty*TS,w:tw*TS,h:th*TS});
+  };
+  addParkingLot(22,42,10,8);
+  addParkingLot(64,104,10,8);
+  addParkingLot(206,46,10,8);
+  addParkingLot(252,96,10,8);
+
   // Road points — split into city zones
   for(let y=1;y<MH-1;y++)for(let x=1;x<MW-1;x++){
     if(map[y][x]===T_ROAD){
@@ -1163,6 +1203,9 @@ const G={
   spawnT:0,cleanT:0,wantedSpawnT:0,heliSpawnT:0,
   pedSpawnT:0,carSpawnT:0,milSpawnT:0,
   indoors:null,indoorFloor:0,indoorPlayerX:0,indoorPlayerY:0,
+  minimapZoom:1,
+  minimapPanX:0,minimapPanY:0,
+  minimapDrag:false,minimapLastX:0,minimapLastY:0,
   // Prevent immediate re-trigger when crossing door thresholds.
   buildingTransitionLock:0,
   // Mission state
@@ -1318,6 +1361,23 @@ canvas.addEventListener('mousemove',e=>{mouseX=e.clientX;mouseY=e.clientY;});
 canvas.addEventListener('mousedown',e=>{mouseDown=true;if(G.player.alive&&!G.player.inCar)G.player.attack();});
 canvas.addEventListener('mouseup',e=>mouseDown=false);
 
+// Circular minimap controls: wheel zoom + drag to pan.
+mmc.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const dir=e.deltaY>0?-0.14:0.14;
+  G.minimapZoom=clamp(G.minimapZoom+dir,0.6,3.2);
+},{passive:false});
+mmc.addEventListener('mousedown',e=>{G.minimapDrag=true;G.minimapLastX=e.clientX;G.minimapLastY=e.clientY;});
+window.addEventListener('mouseup',()=>G.minimapDrag=false);
+window.addEventListener('mousemove',e=>{
+  if(!G.minimapDrag)return;
+  const dx=e.clientX-G.minimapLastX,dy=e.clientY-G.minimapLastY;
+  G.minimapLastX=e.clientX;G.minimapLastY=e.clientY;
+  const span=2600/Math.max(0.6,G.minimapZoom);
+  G.minimapPanX-=dx*(span/mmc.width);
+  G.minimapPanY-=dy*(span/mmc.height);
+});
+
 function cycleWeapon(){
   const weaps=['fists','pistol','shotgun','uzi'];
   let i=weaps.indexOf(G.player.weapon);
@@ -1386,6 +1446,7 @@ function update(dt){
     return;
   }
   G.player.update(dt);
+  wrapEntityPosition(G.player);
   // Attack via SPACE key
   if(JP[' ']||JP['space'])G.player.attack();
   // Mouse aim
@@ -1400,10 +1461,12 @@ function update(dt){
     if(nearDoor)enterBuilding(nearDoor.building);
   }
   // Camera follow
-  G.camera.x+=(G.player.x-canvas.width/2-G.camera.x)*0.12;
-  G.camera.y+=(G.player.y-canvas.height/2-G.camera.y)*0.12;
-  G.camera.x=clamp(G.camera.x,0,MW*TS-canvas.width);
-  G.camera.y=clamp(G.camera.y,0,MH*TS-canvas.height);
+  const targetCamX=G.player.x-canvas.width/2;
+  const targetCamY=G.player.y-canvas.height/2;
+  G.camera.x+=wrapDelta(G.camera.x,targetCamX,WORLD_W)*0.12;
+  G.camera.y+=wrapDelta(G.camera.y,targetCamY,WORLD_H)*0.12;
+  G.camera.x=wrapCoord(G.camera.x,WORLD_W);
+  G.camera.y=wrapCoord(G.camera.y,WORLD_H);
   G.shake=Math.max(0,G.shake-dt);
   // Drug timer
   if(G.drug.type){
@@ -1501,6 +1564,8 @@ function update(dt){
   }
   // Update all entities
   for(const e of G.entities){if(e.alive)e.update(dt);}
+  for(const e of G.entities){if(e.alive&&typeof e.x==='number'&&typeof e.y==='number')wrapEntityPosition(e);}
+  wrapEntityPosition(G.player);
   for(const p of G.particles){if(p.alive)p.update(dt);}
   // NPC F-16 AI — fire rockets at player
   for(const e of G.entities){
@@ -2128,6 +2193,20 @@ function drawTrafficLights(){
   }
 }
 
+function drawParkingLots(){
+  for(const lot of parkingLots){
+    ctx.fillStyle='rgba(35,38,45,0.55)';
+    ctx.fillRect(lot.x,lot.y,lot.w,lot.h);
+    ctx.strokeStyle='rgba(200,205,215,0.2)';
+    ctx.lineWidth=1;
+    ctx.strokeRect(lot.x,lot.y,lot.w,lot.h);
+    // Slot marks for parked vehicles.
+    for(let sx=lot.x+10;sx<lot.x+lot.w-8;sx+=24){
+      ctx.beginPath();ctx.moveTo(sx,lot.y+8);ctx.lineTo(sx,lot.y+lot.h-8);ctx.stroke();
+    }
+  }
+}
+
 function drawBldgs(){
   const tt=G.time*0.001,drugT=G.drug.type==='trippy';
   for(const b of bldgs){
@@ -2276,6 +2355,7 @@ function render(){
   ctx.save();
   ctx.translate(-Math.floor(G.camera.x)+sx,-Math.floor(G.camera.y)+sy);
   drawTiles();
+  drawParkingLots();
   drawTrafficLights();
   drawBldgs();
 
@@ -2567,47 +2647,85 @@ function drawInterior(){
 }
 
 function drawMinimap(){
-  const sz=160;mmx.fillStyle='rgba(10,12,10,0.92)';mmx.fillRect(0,0,sz,sz);
-  const sc=sz/(MH*TS);
-  for(let y=0;y<MH;y+=2)for(let x=0;x<MW;x+=2){
-    const t=map[y][x];
-    mmx.fillStyle=t===T_ROAD?'#555':t===T_BUILD?'#2a2a2a':t===T_WATER||t===T_OCEAN?'#1a4080':t===T_BEACH?'#8B7340':t===T_RUNWAY?'#888':t===T_PARK?'#1a4a15':t===T_MIL?'#3a4a20':'#2a3a22';
-    mmx.fillRect(x*TS*sc,y*TS*sc,2,2);
+  const sz=mmc.width;
+  mmx.clearRect(0,0,sz,sz);
+  mmx.save();
+  mmx.beginPath();
+  mmx.arc(sz/2,sz/2,sz/2-2,0,Math.PI*2);
+  mmx.clip();
+  mmx.fillStyle='rgba(10,12,10,0.92)';
+  mmx.fillRect(0,0,sz,sz);
+
+  const zoom=Math.max(0.6,G.minimapZoom||1);
+  const span=2600/zoom;
+  const centerX=wrapCoord(G.player.x+(G.minimapPanX||0),WORLD_W);
+  const centerY=wrapCoord(G.player.y+(G.minimapPanY||0),WORLD_H);
+  const scale=sz/span;
+  const mapPoint=(wx,wy)=>{
+    const dx=wrapDelta(centerX,wx,WORLD_W);
+    const dy=wrapDelta(centerY,wy,WORLD_H);
+    return {x:sz/2+dx*scale,y:sz/2+dy*scale};
+  };
+
+  // Render local map window around the minimap center.
+  const worldStep=TS*2;
+  for(let oy=-span/2;oy<span/2;oy+=worldStep){
+    for(let ox=-span/2;ox<span/2;ox+=worldStep){
+      const wx=wrapCoord(centerX+ox,WORLD_W);
+      const wy=wrapCoord(centerY+oy,WORLD_H);
+      const t=tileAt(wx,wy);
+      mmx.fillStyle=t===T_ROAD?'#555':t===T_BUILD?'#2a2a2a':t===T_WATER||t===T_OCEAN?'#1a4080':t===T_BEACH?'#8B7340':t===T_RUNWAY?'#888':t===T_PARK?'#1a4a15':t===T_MIL?'#3a4a20':'#2a3a22';
+      const p=mapPoint(wx,wy);
+      mmx.fillRect(p.x,p.y,3,3);
+    }
   }
-  // Military base outline on minimap
-  mmx.strokeStyle='rgba(80,180,40,0.7)';mmx.lineWidth=1;
-  mmx.strokeRect(MIL.x1*TS*sc,MIL.y1*TS*sc,(MIL.x2-MIL.x1)*TS*sc,(MIL.y2-MIL.y1)*TS*sc);
-  // City dividers
-  mmx.strokeStyle='rgba(255,200,0,0.25)';mmx.lineWidth=0.5;
-  mmx.beginPath();mmx.moveTo(CITY1_X2*TS*sc,0);mmx.lineTo(CITY1_X2*TS*sc,sz);mmx.stroke();
-  mmx.beginPath();mmx.moveTo(CITY2_X1*TS*sc,0);mmx.lineTo(CITY2_X1*TS*sc,sz);mmx.stroke();
-  // Special locs on minimap
+
+  // Parking lots overlay.
+  mmx.strokeStyle='rgba(180,190,205,0.35)';
+  mmx.lineWidth=1;
+  for(const lot of parkingLots){
+    const p=mapPoint(lot.x+lot.w*0.5,lot.y+lot.h*0.5);
+    mmx.strokeRect(p.x-lot.w*0.5*scale,p.y-lot.h*0.5*scale,lot.w*scale,lot.h*scale);
+  }
+
+  // Special locs on minimap.
   for(const loc of SPECIAL_LOCS){
     if(loc.type==='mission_giver')continue;
     const col={garage:'#00FF41',nightclub:'#FC8181',drugden:'#e040fb',gunshop:'#F6AD55',boatdock:'#3182CE',helipad:'#FFD700',airstrip:'#fff',milairstrip:'#8f8',milbase:'#4a6'}[loc.type]||'#aaa';
-    mmx.fillStyle=col;mmx.fillRect(loc.x*sc,loc.y*sc,4,4);
+    const p=mapPoint(loc.x,loc.y);
+    mmx.fillStyle=col;mmx.fillRect(p.x-2,p.y-2,4,4);
   }
-  // Mission waypoint on minimap
+
+  // Mission waypoint.
   if(G.mission&&G.mission.state==='active'){
     let wx=null,wy=null;
     if(G.mission.type==='goto'&&G.mission.targetTile){wx=G.mission.targetTile.x*TS;wy=G.mission.targetTile.y*TS;}
     else if(G.mission.type==='steal_vehicle'&&G.player.inCar&&G.player.inCar.vtype===G.mission.vtype&&G.mission.deliverTile){wx=G.mission.deliverTile.x*TS;wy=G.mission.deliverTile.y*TS;}
-    if(wx!==null){const p=0.5+Math.sin(G.time*0.005)*0.5;mmx.fillStyle='rgba(255,220,0,'+p+')';mmx.beginPath();mmx.arc(wx*sc,wy*sc,4,0,Math.PI*2);mmx.fill();}
+    if(wx!==null){const p=mapPoint(wx,wy);const a=0.5+Math.sin(G.time*0.005)*0.5;mmx.fillStyle='rgba(255,220,0,'+a+')';mmx.beginPath();mmx.arc(p.x,p.y,4,0,Math.PI*2);mmx.fill();}
   }
-  // Vehicles on minimap
+
   for(const e of G.entities){
     if(!e.alive)continue;
     if(e instanceof Vehicle){
       mmx.fillStyle=e.vtype==='tank'||e.vtype==='f16'||e.vtype==='miljeep'?'#8f8':e.isPol?'#4444ff':'#aaa';
-      mmx.fillRect(e.x*sc-1,e.y*sc-1,3,3);
-    } else if(e instanceof Pickup){mmx.fillStyle='#FFD700';mmx.fillRect(e.x*sc-1,e.y*sc-1,2,2);}
-    else if(e instanceof MilSoldier){mmx.fillStyle='#6a8';mmx.fillRect(e.x*sc-1,e.y*sc-1,2,2);}
+      const p=mapPoint(e.x,e.y);
+      mmx.fillRect(p.x-1,p.y-1,3,3);
+    }
   }
+
   mmx.fillStyle='#ff3333';
-  mmx.beginPath();mmx.arc(G.player.x*sc,G.player.y*sc,3,0,Math.PI*2);mmx.fill();
-  mmx.strokeStyle='rgba(255,255,255,0.25)';mmx.lineWidth=1;
-  mmx.strokeRect(G.camera.x*sc,G.camera.y*sc,canvas.width*sc,canvas.height*sc);
+  mmx.beginPath();mmx.arc(sz/2,sz/2,4,0,Math.PI*2);mmx.fill();
+
+  // View heading + zoom ring UI.
+  mmx.strokeStyle='rgba(255,255,255,0.3)';
+  mmx.beginPath();mmx.arc(sz/2,sz/2,sz*0.33,0,Math.PI*2);mmx.stroke();
+  mmx.fillStyle='rgba(255,255,255,0.7)';
+  mmx.font='10px Courier New';
+  mmx.textAlign='center';
+  mmx.fillText('🔍 x'+zoom.toFixed(1),sz/2,16);
+  mmx.restore();
 }
+
 
 // Game loop
 let lastT=0;
@@ -2640,6 +2758,8 @@ function init(){
     const vt=c2Types[RI(0,c2Types.length-1)];
     spawnNpcTrafficVehicle(vt,city2RoadPts,randCity2Road,G.player.x,G.player.y);
   }
+  // Parked cars + fuller lots around town for visual variety and steal opportunities.
+  for(const lot of parkingLots)spawnParkedCarsInLot(lot,RI(8,16));
   // City 1 airport vehicles
   G.entities.push(Object.assign(new Vehicle(116*TS,38*TS,'heli'),{angle:0}));
   G.entities.push(Object.assign(new Vehicle((AP1.x1+8)*TS,(AP1.y1+3)*TS,'plane'),{angle:0}));
@@ -2687,8 +2807,8 @@ function init(){
   for(let i=0;i<6;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'uzi',40));}
   for(let i=0;i<5;i++){const rp=randRoad();G.entities.push(new Pickup(rp.x,rp.y,'armor',50));}
   // Camera centered on player
-  G.camera.x=clamp(G.player.x-canvas.width/2,0,MW*TS-canvas.width);
-  G.camera.y=clamp(G.player.y-canvas.height/2,0,MH*TS-canvas.height);
+  G.camera.x=wrapCoord(G.player.x-canvas.width/2,WORLD_W);
+  G.camera.y=wrapCoord(G.player.y-canvas.height/2,WORLD_H);
   G.player.updateHpBar();G.player.updateWeaponHUD();updateWantedBar();
   // Start first mission automatically
   setTimeout(()=>{startMission('m1');},2000);
