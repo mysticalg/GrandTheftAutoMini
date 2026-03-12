@@ -51,7 +51,7 @@ body { background:#000; overflow:hidden; font-family:"Courier New",monospace; }
   <div id="loc-hint"></div>
   <div id="zone-label"></div>
   <div id="mission-panel"><div id="mission-title"></div><div id="mission-desc"></div><div id="mission-obj"></div></div>
-  <div id="controls-hint">WASD:Move/Steer | E:Enter/Exit | Q:Alt+ Z:Alt- | SPACE:Attack | SHIFT:Sprint | F:Interact | G:Repair | H:Drug | R:Respawn | M:Next Mission</div>
+  <div id="controls-hint">WASD:Move/Steer | 🚪 Auto Enter/Exit Buildings | E:Vehicle Enter/Exit | Q:Alt+ Z:Alt- | SPACE:Attack | SHIFT:Sprint | F:Interact | G:Repair | H:Drug | R:Respawn | M:Next Mission</div>
   <div id="altitude-bar" style="position:absolute;top:16px;left:50%;transform:translateX(-50%);color:#adf;font-size:13px;font-weight:bold;text-shadow:1px 1px #000;display:none;background:rgba(0,0,0,0.55);padding:4px 14px;border-radius:6px;letter-spacing:1px;"></div>
 </div>
 <div id="wasted-screen"><div id="wasted-text">WASTED</div><div id="wasted-sub">Press R to Respawn</div></div>
@@ -1114,6 +1114,8 @@ const G={
   spawnT:0,cleanT:0,wantedSpawnT:0,heliSpawnT:0,
   pedSpawnT:0,carSpawnT:0,milSpawnT:0,
   indoors:null,indoorFloor:0,indoorPlayerX:0,indoorPlayerY:0,
+  // Prevent immediate re-trigger when crossing door thresholds.
+  buildingTransitionLock:0,
   // Mission state
   mission:null,completedMissions:new Set(),
   // Zone tracking
@@ -1301,10 +1303,22 @@ function tryEnterExit(){
   }
 }
 
+// Returns the nearest building door if the player is within the trigger radius.
+function nearestBuildingDoor(px,py,triggerDist=34){
+  let best=null,bestD=triggerDist;
+  for(const b of bldgs){
+    const doorX=b.x+b.w/2,doorY=b.y+b.h;
+    const d=Math.hypot(px-doorX,py-doorY);
+    if(d<bestD){bestD=d;best={building:b,doorX,doorY,dist:d};}
+  }
+  return best;
+}
+
 // Update loop
 function update(dt){
   if(!G.player.alive)return;
   G.time+=dt;
+  G.buildingTransitionLock=Math.max(0,G.buildingTransitionLock-dt);
   // Indoor mode movement
   if(G.indoors){
     const spd=2.5;
@@ -1316,9 +1330,10 @@ function update(dt){
     // Floor navigation with < >
     if(JP['pageup']||JP['arrowup']&&K['shift']){G.indoorFloor=Math.min((G.indoors.building.floors||1)-1,G.indoorFloor+1);}
     if(JP['pagedown']||JP['arrowdown']&&K['shift']){G.indoorFloor=Math.max(0,G.indoorFloor-1);}
-    // Exit when near door (bottom center)
+    // Auto exit when near the door (or E for manual consistency).
     const doorX=canvas.width/2,doorY=RY+RH-10;
-    if(Math.hypot(G.indoorPlayerX-doorX,G.indoorPlayerY-doorY)<40&&(K['e']||JP['e'])){exitBuilding();}
+    const atExitDoor=Math.hypot(G.indoorPlayerX-doorX,G.indoorPlayerY-doorY)<42;
+    if(atExitDoor&&(G.buildingTransitionLock<=0||(K['e']||JP['e'])))exitBuilding();
     return;
   }
   G.player.update(dt);
@@ -1329,6 +1344,11 @@ function update(dt){
     const cx=G.player.x-G.camera.x,cy=G.player.y-G.camera.y;
     if(mouseDown){G.player.angle=Math.atan2(mouseY-cy,mouseX-cx);G.player.attack();}
     else if(mouseX||mouseY){G.player.angle=Math.atan2(mouseY-cy,mouseX-cx);}
+  }
+  // Auto-enter buildings by walking to the exterior door.
+  if(!G.player.inCar&&G.buildingTransitionLock<=0){
+    const nearDoor=nearestBuildingDoor(G.player.x,G.player.y,30);
+    if(nearDoor)enterBuilding(nearDoor.building);
   }
   // Camera follow
   G.camera.x+=(G.player.x-canvas.width/2-G.camera.x)*0.12;
@@ -2351,16 +2371,25 @@ function drawClouds(opacity,tt){
 function enterBuilding(b){
   G.indoors={building:b,floor:0};
   G.indoorFloor=0;
+  const pad=90,RY=pad+50,RH=canvas.height-pad*2-70;
+  // Spawn a little above the exit area to avoid instant bounce-back.
   G.indoorPlayerX=canvas.width/2;
-  G.indoorPlayerY=canvas.height*0.72;
+  G.indoorPlayerY=Math.max(RY+26,RY+RH-72);
+  G.buildingTransitionLock=550;
   sound('carenter');
   const nm={garage:"Jake's Garage",club:'Neon Club',drugden:'Drug Den',gunshop:'Ammu-Nation'}[b.special]||'Building';
-  notify('Entered '+nm+'. WASD to move | E to exit.',3500);
+  notify('Entered '+nm+'. WASD to move | walk to EXIT door (or E) to leave.',3500);
 }
 
 function exitBuilding(){
   if(!G.indoors)return;
+  const b=G.indoors.building;
   G.indoors=null;
+  // Place player outside and slightly away from the door so they don't flip back in.
+  const doorX=b.x+b.w/2,doorY=b.y+b.h;
+  G.player.x=doorX;
+  G.player.y=doorY+48;
+  G.buildingTransitionLock=700;
   sound('carenter');
   notify('Exited building.',1200);
 }
@@ -2479,7 +2508,7 @@ function drawInterior(){
   ctx.fillText(bName.toUpperCase()+' — FLOOR '+(floor+1)+' / '+floors,canvas.width/2,34);
   ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(0,canvas.height-32,canvas.width,32);
   ctx.fillStyle='rgba(255,255,255,0.6)';ctx.font='11px Courier New';ctx.textAlign='center';
-  ctx.fillText('WASD: Move  |  E: Exit Building'+(floors>1?'  |  PgUp/PgDn: Change Floor':''),canvas.width/2,canvas.height-12);
+  ctx.fillText('WASD: Move  |  Walk to EXIT (or E) to leave'+(floors>1?'  |  PgUp/PgDn: Change Floor':''),canvas.width/2,canvas.height-12);
 }
 
 function drawMinimap(){
