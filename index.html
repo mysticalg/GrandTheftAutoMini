@@ -72,6 +72,9 @@ const AP2={x1:278,x2:320,y1:8,y2:50};    // City 2 airport tile bounds
 const BEACH_Y=238,OCEAN_Y=270;
 const T_GRASS=0,T_ROAD=1,T_SW=2,T_BUILD=3,T_WATER=4,T_PARK=5,T_PARK2=6,T_BEACH=7,T_OCEAN=8,T_RUNWAY=9,T_MIL=10;
 const map=[],bldgs=[],roadPts=[],swPts=[],city1RoadPts=[],city2RoadPts=[],SPECIAL_LOCS=[];
+// Timed traffic-light controllers for crossroads.
+const trafficLights=[];
+const TRAFFIC_LIGHT_CYCLE={green:5200,yellow:1200,allRed:500};
 const BWALL=['#8B7355','#A0856C','#6B7280','#7C6D5E','#9B8B7A','#C4956A','#A67C52','#8A9BA8','#7B8FA1','#6B5545'];
 const BROOF=['#5C4A3E','#4A5568','#2D3748','#553C2E','#3D5A6B','#4A3728','#394556','#5A4A3A','#2C3E50','#4A3320'];
 const CAR_COLS=['#E53E3E','#3182CE','#38A169','#D69E2E','#805AD5','#DD6B20','#E2E8F0','#FC8181','#F6AD55','#B7791F'];
@@ -142,6 +145,46 @@ function randCity2Road(){return city2RoadPts.length?city2RoadPts[RI(0,city2RoadP
 function inCity2Zone(){return G.player&&G.player.x>CITY2_X1*TS&&G.player.y<RURAL_Y*TS;}
 function inMilBase(){return G.player&&G.player.x>MIL.x1*TS&&G.player.x<MIL.x2*TS&&G.player.y>MIL.y1*TS&&G.player.y<MIL.y2*TS;}
 function nrm(x,y){const l=Math.hypot(x,y)||1;return{x:x/l,y:y/l};}
+function isCivilianPed(e){return e instanceof Ped||e instanceof BeachPed;}
+function trafficLightState(light,timeMs){
+  const c=TRAFFIC_LIGHT_CYCLE;
+  const cycle=c.green*2+c.yellow*2+c.allRed*2;
+  let t=(timeMs+light.offset)%cycle;
+  if(t<c.green)return{ns:'go',ew:'stop'};
+  t-=c.green;
+  if(t<c.yellow)return{ns:'caution',ew:'stop'};
+  t-=c.yellow;
+  if(t<c.allRed)return{ns:'stop',ew:'stop'};
+  t-=c.allRed;
+  if(t<c.green)return{ns:'stop',ew:'go'};
+  t-=c.green;
+  if(t<c.yellow)return{ns:'stop',ew:'caution'};
+  return{ns:'stop',ew:'stop'};
+}
+// Build one signal per 2x2 crossroad block so AI can obey stop/go timing.
+function genTrafficLights(){
+  trafficLights.length=0;
+  for(let y=1;y<MH-2;y++){
+    for(let x=1;x<MW-2;x++){
+      if(x%CELL!==1||y%CELL!==1)continue;
+      const isCross=map[y]?.[x]===T_ROAD&&map[y]?.[x+1]===T_ROAD&&map[y+1]?.[x]===T_ROAD&&map[y+1]?.[x+1]===T_ROAD;
+      if(!isCross)continue;
+      trafficLights.push({x:(x+1)*TS,y:(y+1)*TS,offset:RI(0,4500)});
+    }
+  }
+}
+function npcShouldStopAtLight(v){
+  if(!v.isNpc||v.vtype==='bike'||v.floats||v.flies)return false;
+  const look=28;
+  const fx=v.x+Math.cos(v.angle)*look,fy=v.y+Math.sin(v.angle)*look;
+  for(const light of trafficLights){
+    if(Math.hypot(fx-light.x,fy-light.y)>22)continue;
+    const st=trafficLightState(light,G.time);
+    const axis=Math.abs(Math.cos(v.angle))>Math.abs(Math.sin(v.angle))?'ew':'ns';
+    if(st[axis]!=='go')return true;
+  }
+  return false;
+}
 function addExplosion(x,y){
   for(let i=0;i<55;i++){const a=R(0,Math.PI*2),s=R(1.5,6);G.particles.push(new Particle(x,y,Math.cos(a)*s,Math.sin(a)*s,i<35?'hsl('+(RI(0,40))+',100%,'+(RI(45,65))+'%)':'#888',R(400,900),R(3,9)));}
   for(let i=0;i<12;i++){const a=R(0,Math.PI*2),s=R(0.5,2);G.particles.push(new Particle(x,y,Math.cos(a)*s,Math.sin(a)*s,'#333',R(600,1200),R(6,12)));}
@@ -259,6 +302,7 @@ function genMap(){
   bldgs.push({x:(MIL.x1+4)*TS,y:(MIL.y1+12)*TS,w:12*TS,h:14*TS,wall:'#4a5a30',roof:'#3a4a22',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'milhangar'});
   bldgs.push({x:(MIL.x2-16)*TS,y:(MIL.y1+12)*TS,w:12*TS,h:10*TS,wall:'#4a5a30',roof:'#3a4a22',floors:2,wsX:[],wsY:[],winW:[],sz:4,special:'milbarracks'});
   bldgs.push({x:(MIL.x1+4)*TS,y:(MIL.y2-18)*TS,w:10*TS,h:10*TS,wall:'#4a5a30',roof:'#3a4a22',floors:1,wsX:[],wsY:[],winW:[],sz:4,special:'milstore'});
+  genTrafficLights();
   placeSpecialLocs();
 }
 
@@ -420,7 +464,7 @@ class Bullet extends Entity{
     for(const e of G.entities){
       if(!e.alive||e===this.owner)continue;
       if(e instanceof Vehicle){if(dst(this,e)<(e.w||32)/2){e.hit(this.dmg,this);this.alive=false;return;}}
-      else if(e instanceof Ped||e instanceof CopOfficer||e instanceof MilSoldier){if(dst(this,e)<e.r+2){e.hit(this.dmg,this);this.alive=false;return;}}
+      else if(isCivilianPed(e)||e instanceof CopOfficer||e instanceof MilSoldier){if(dst(this,e)<e.r+2){e.hit(this.dmg,this);this.alive=false;return;}}
     }
     if(this.owner!==G.player&&dst(this,G.player)<G.player.r+2){G.player.hit(this.dmg,this);this.alive=false;}
   }
@@ -444,7 +488,7 @@ class Rocket extends Entity{
     for(const e of G.entities){
       if(!e.alive||e===this.owner)continue;
       if(e instanceof Vehicle&&dst(this,e)<(e.w||32)/2+14){this.explode();return;}
-      if((e instanceof Ped||e instanceof CopOfficer||e instanceof MilSoldier)&&dst(this,e)<24){this.explode();return;}
+      if((isCivilianPed(e)||e instanceof CopOfficer||e instanceof MilSoldier)&&dst(this,e)<24){this.explode();return;}
     }
     if(this.owner!==G.player&&dst(this,G.player)<24&&!G.player.inCar){this.explode();}
     if(this.owner!==G.player&&G.player.inCar&&dst(this,G.player.inCar)<(G.player.inCar.w||32)/2+14){this.explode();}
@@ -457,7 +501,7 @@ class Rocket extends Entity{
       const d=dst(this,e);
       if(d<140){
         if(e instanceof Vehicle)e.hit(200,this);
-        else if(e instanceof Ped||e instanceof CopOfficer||e instanceof MilSoldier){if(e.hit)e.hit(120,this);}
+        else if(isCivilianPed(e)||e instanceof CopOfficer||e instanceof MilSoldier){if(e.hit)e.hit(120,this);}
       }
     }
     if(dst(this,G.player)<140&&!G.player.inCar)G.player.hit(100,this);
@@ -577,7 +621,7 @@ class Vehicle extends Entity{
     }
     if(!this.flies&&!this.floats&&Math.abs(this.spd)>1.2){
       if(dst(this,G.player)<22&&!G.player.inCar)G.player.hit(Math.abs(this.spd)*5,this);
-      for(const e of G.entities){if(e instanceof Ped&&e.alive&&dst(this,e)<20)e.hit(Math.abs(this.spd)*7,this);}
+      for(const e of G.entities){if(isCivilianPed(e)&&e.alive&&dst(this,e)<20)e.hit(Math.abs(this.spd)*7,this);}
     }
     if(this.smokeDmg>80&&Math.random()<0.3)G.particles.push(new Particle(this.x+R(-6,6),this.y+R(-6,6),R(-0.3,0.3),R(-0.8,0),'#666',R(700,1400),R(5,9)));
   }
@@ -592,6 +636,12 @@ class Vehicle extends Entity{
     while(diff>Math.PI)diff-=Math.PI*2;while(diff<-Math.PI)diff+=Math.PI*2;
     if(Math.abs(diff)>0.06)this.angle+=Math.sign(diff)*Math.min(this.trn*0.85,Math.abs(diff));
     this.spd=Math.min(this.spd+this.acc*0.4,this.mxS*0.62);
+    // Obey timed traffic signals at crossroads.
+    if(npcShouldStopAtLight(this)){
+      this.spd*=0.78;
+      if(Math.abs(this.spd)<0.05)this.spd=0;
+      return;
+    }
     if(Math.hypot(dx,dy)<50){this.npcTarget=randRoad();}
     // Avoid player
     if(G.wanted>2&&dst(this,G.player)<120){const ax=this.x-G.player.x,ay=this.y-G.player.y;this.angle=Math.atan2(ay,ax);this.spd=Math.min(this.spd+0.1,this.mxS*0.8);}
@@ -649,6 +699,51 @@ class Ped extends Entity{
     this.hp-=dmg;
     for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#e53e3e',300,3));
     if(this.hp<=0){const m=RI(10,120);addMoney(m);notify('+$'+m);this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){G.kills++;addWanted(10,200);if(G.mission&&G.mission.type==='kill'){const inC2=this.x>CITY2_X1*TS;const inC1=this.x<CITY1_X2*TS;if(G.mission.area==='city2'&&inC2){G.mission.progress++;checkMission();}else if(G.mission.area==='city1'&&inC1){G.mission.progress++;checkMission();}else if(!G.mission.area){G.mission.progress++;checkMission();}}updateMissionObj();}}
+  }
+}
+
+
+// Beach civilian variants: swimmers, surfers, and ice-cream queue residents.
+class BeachPed extends Entity{
+  constructor(x,y,role='beachgoer'){
+    super(x,y);this.r=8;this.role=role;this.hp=35;
+    this.appearance=randAppearance();this.walkFrame=RI(0,9);this.spd=R(0.6,1.5);
+    this.angle=R(0,Math.PI*2);this.idleT=R(500,2400);this.home={x,y};this.phase=R(0,Math.PI*2);
+    this.queueT=R(1200,2600);this.surfDir=Math.random()>0.5?1:-1;
+  }
+  update(dt){
+    this.phase+=dt*0.002;
+    if(this.role==='queue'||this.role==='vendor'){
+      this.idleT-=dt;
+      if(this.idleT<=0){this.idleT=R(900,1800);this.angle+=R(-0.4,0.4);}
+      const wobble=this.role==='queue'?2.8:1.6;
+      this.x=this.home.x+Math.sin(this.phase*0.8)*wobble;
+      this.y=this.home.y+Math.cos(this.phase*0.6)*wobble;
+      return;
+    }
+    if(this.role==='swimmer'){
+      this.x+=Math.cos(this.angle)*this.spd*0.4;
+      this.y+=Math.sin(this.angle)*this.spd*0.25;
+      if(tileAt(this.x,this.y)!==T_OCEAN)this.angle+=Math.PI*0.7;
+      if(this.y<OCEAN_Y*TS+8||this.y>(OCEAN_Y+6)*TS)this.angle+=Math.PI*0.5;
+      if(Math.random()<0.02)this.angle+=R(-0.35,0.35);
+      return;
+    }
+    if(this.role==='surfer'){
+      this.x+=this.surfDir*1.8;
+      this.y=this.home.y+Math.sin(this.phase*1.8)*7;
+      if(this.x<2*TS||this.x>(MW-2)*TS)this.surfDir*=-1;
+      return;
+    }
+    this.idleT-=dt;
+    if(this.idleT<=0){this.idleT=R(1200,2800);this.angle=R(0,Math.PI*2);}
+    const nx=this.x+Math.cos(this.angle)*this.spd*0.7,ny=this.y+Math.sin(this.angle)*this.spd*0.7;
+    if(pedWalkable(nx,ny)){this.x=nx;this.y=ny;}else this.angle+=R(0.4,1);
+  }
+  hit(dmg){
+    this.hp-=dmg;
+    for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#e53e3e',300,3));
+    if(this.hp<=0)this.alive=false;
   }
 }
 
@@ -789,7 +884,7 @@ class Player extends Entity{
       this.punchT=250;this.atkT=500;sound('punch');
       let hitPed=false,hitCop=false;
       for(const e of G.entities){
-        if(e instanceof Ped&&dst(this,e)<42){e.hit(15+(G.drug&&G.drug.type==='power'?30:0),this);hitPed=true;}
+        if(isCivilianPed(e)&&dst(this,e)<42){e.hit(15+(G.drug&&G.drug.type==='power'?30:0),this);hitPed=true;}
         if(e instanceof CopOfficer&&dst(this,e)<42){e.hit(20+(G.drug&&G.drug.type==='power'?40:0),this);hitCop=true;}
         if(e instanceof Vehicle&&dst(this,e)<42){e.hit(5,this);}
       }
@@ -1415,6 +1510,26 @@ function drawPed(ped){
   drawThoughtBubble(ped.x,ped.y,pedThoughtText(ped));
 }
 
+
+function drawBeachPed(ped){
+  if(ped.role==='swimmer'){
+    ctx.fillStyle='rgba(255,255,255,0.35)';ctx.beginPath();ctx.arc(ped.x,ped.y+2,8,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=ped.appearance.skin;ctx.beginPath();ctx.arc(ped.x,ped.y-2,4.5,0,Math.PI*2);ctx.fill();
+    return;
+  }
+  if(ped.role==='surfer'){
+    ctx.save();ctx.translate(ped.x,ped.y);ctx.rotate(ped.surfDir>0?0:Math.PI);
+    ctx.fillStyle='#f6ad55';ctx.fillRect(-14,-5,28,10);
+    ctx.fillStyle='#fff';ctx.fillRect(-12,-2,24,4);
+    ctx.restore();
+    drawHuman(ped.x,ped.y-6,ped.surfDir>0?0:Math.PI,ped.walkFrame,ped.appearance,true,null,null);
+    return;
+  }
+  drawHuman(ped.x,ped.y,ped.angle,ped.walkFrame,ped.appearance,false,null,null);
+  if(ped.role==='queue')drawThoughtBubble(ped.x,ped.y,'🍦');
+  if(ped.role==='vendor')drawThoughtBubble(ped.x,ped.y,'🍨');
+}
+
 function drawCop(cop){
   drawHuman(cop.x,cop.y,cop.angle,cop.walkFrame,cop.appearance,true,'pistol','COP');
   // Badge flash
@@ -1667,6 +1782,10 @@ function drawCar(car){
     ctx.fillStyle='rgba(255,255,255,0.7)';ctx.font='bold 10px Courier New';ctx.textAlign='center';
     ctx.fillText(car.name,car.x,car.y-car.h/2-15);
   }
+  if(car.isIceCreamVan){
+    ctx.fillStyle='rgba(255,255,255,0.9)';ctx.font='bold 9px Arial';ctx.textAlign='center';
+    ctx.fillText('ICE CREAM',car.x,car.y+3);
+  }
 }
 
 function drawBullet(b){
@@ -1716,8 +1835,9 @@ function drawTiles(){
           const isHorizOnly=(cy2===1||cy2===2)&&!(cx2===1||cx2===2);
           // White edge markings
           ctx.fillStyle='rgba(255,255,255,0.65)';
-          if(cy2===1)ctx.fillRect(px,py,TS,2);         // top edge of horiz road
-          if(cy2===2)ctx.fillRect(px,py+TS-2,TS,2);    // bottom edge
+          const isIntersection=(cx2===1||cx2===2)&&(cy2===1||cy2===2);
+          if(cy2===1&&!isIntersection)ctx.fillRect(px,py,TS,2);         // top edge of horiz road
+          if(cy2===2&&!isIntersection)ctx.fillRect(px,py+TS-2,TS,2);    // bottom edge
           if(cx2===1&&isVertOnly)ctx.fillRect(px,py,2,TS);      // left edge of vert road
           if(cx2===2&&isVertOnly)ctx.fillRect(px+TS-2,py,2,TS); // right edge
           // Yellow dashed center lines
@@ -1791,6 +1911,21 @@ function drawTiles(){
         }
       }
     }
+  }
+}
+
+
+function drawTrafficLights(){
+  for(const light of trafficLights){
+    const sx=light.x-G.camera.x,sy=light.y-G.camera.y;
+    if(sx<-80||sy<-80||sx>canvas.width+80||sy>canvas.height+80)continue;
+    const st=trafficLightState(light,G.time);
+    // North-South head
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(light.x-20,light.y-26,8,18);
+    ctx.fillStyle=st.ns==='go'?'#22c55e':st.ns==='caution'?'#facc15':'#ef4444';ctx.beginPath();ctx.arc(light.x-16,light.y-17,3,0,Math.PI*2);ctx.fill();
+    // East-West head
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(light.x+12,light.y+8,8,18);
+    ctx.fillStyle=st.ew==='go'?'#22c55e':st.ew==='caution'?'#facc15':'#ef4444';ctx.beginPath();ctx.arc(light.x+16,light.y+17,3,0,Math.PI*2);ctx.fill();
   }
 }
 
@@ -1942,6 +2077,7 @@ function render(){
   ctx.save();
   ctx.translate(-Math.floor(G.camera.x)+sx,-Math.floor(G.camera.y)+sy);
   drawTiles();
+  drawTrafficLights();
   drawBldgs();
 
   // Draw helipad marker
@@ -2000,6 +2136,7 @@ function render(){
     else if(e instanceof Bullet)drawBullet(e);
     else if(e instanceof Pickup)drawPickup(e);
     else if(e instanceof Ped)drawPed(e);
+    else if(e instanceof BeachPed)drawBeachPed(e);
     else if(e instanceof CopOfficer)drawCop(e);
     else if(e instanceof MilSoldier)drawMilSoldier(e);
   }
@@ -2323,6 +2460,14 @@ function init(){
   // Boats at beaches
   for(let i=0;i<4;i++)G.entities.push(Object.assign(new Vehicle((22+i*6)*TS,(BEACH_Y-4)*TS,'boat'),{angle:0}));
   for(let i=0;i<3;i++)G.entities.push(Object.assign(new Vehicle((200+i*6)*TS,(BEACH_Y-4)*TS,'boat'),{angle:0}));
+  // Beach life set dressing: swimmers, surfers, and an ice-cream van queue.
+  const iceVan=Object.assign(new Vehicle(52*TS,(BEACH_Y-4)*TS,'van'),{angle:0,driver:{isStatic:true},isIceCreamVan:true,col:'#F9FAFB'});
+  G.entities.push(iceVan);
+  G.entities.push(new BeachPed(iceVan.x+10,iceVan.y+26,'vendor'));
+  for(let i=0;i<6;i++)G.entities.push(new BeachPed(iceVan.x-24-i*12,iceVan.y+28+((i%2)*6),'queue'));
+  for(let i=0;i<16;i++)G.entities.push(new BeachPed(R(10,MW-10)*TS,R(BEACH_Y+2,OCEAN_Y-2)*TS,'beachgoer'));
+  for(let i=0;i<14;i++)G.entities.push(new BeachPed(R(6,MW-6)*TS,R(OCEAN_Y+0.4,OCEAN_Y+5.3)*TS,'swimmer'));
+  for(let i=0;i<10;i++)G.entities.push(new BeachPed(R(6,MW-6)*TS,R(OCEAN_Y+1.2,OCEAN_Y+4.8)*TS,'surfer'));
   // Pedestrians — city 1
   for(let i=0;i<50;i++){
     const pool=swPts.filter(p=>p.x<CITY1_X2*TS&&p.y<RURAL_Y*TS);
