@@ -33,4 +33,4 @@ This repository now includes a GitHub Actions workflow at
 3. Ensure **Source** is set to **GitHub Actions**.
 
 After the workflow succeeds, your site will be available at:
-`https://<your-github-username>.github.io/<repository-name>/`.
+`https://mysticalg.github.io/GrandTheftAutoMini/`.
