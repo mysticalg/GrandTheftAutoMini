@@ -209,20 +209,45 @@ function offscreenRoadTargetForDespawn(v,samples=90){
 }
 // Pick a road point near an anchor position so spawned traffic fades in naturally
 // around the player instead of appearing/disappearing at arbitrary map-wide points.
+function worldDistXY(ax,ay,bx,by){
+  return Math.hypot(wrapDelta(ax,bx,WORLD_W),wrapDelta(ay,by,WORLD_H));
+}
 function roadNear(px,py,pool,minD=480,maxD=1600,samples=60){
   const src=pool&&pool.length?pool:roadPts;
   if(!src.length)return randRoad();
   let fallback=src[RI(0,src.length-1)],best=null,bestScore=1e9;
   for(let i=0;i<samples;i++){
     const p=src[RI(0,src.length-1)];
-    const d=Math.hypot(p.x-px,p.y-py);
-    if(d<Math.hypot(fallback.x-px,fallback.y-py))fallback=p;
+    const d=worldDistXY(p.x,p.y,px,py);
+    if(d<worldDistXY(fallback.x,fallback.y,px,py))fallback=p;
     if(d>=minD&&d<=maxD){
       const score=Math.abs((minD+maxD)*0.5-d);
       if(score<bestScore){best=p;bestScore=score;}
     }
   }
   return best||fallback;
+}
+function sidewalkNear(px,py,maxD=340,samples=90){
+  if(!swPts.length)return null;
+  let best=null,bestD=1e9;
+  for(let i=0;i<samples;i++){
+    const p=swPts[RI(0,swPts.length-1)];
+    if(tileAt(p.x,p.y)!==T_SW)continue;
+    const d=worldDistXY(p.x,p.y,px,py);
+    if(d<bestD){best=p;bestD=d;}
+  }
+  return best&&bestD<=maxD?best:null;
+}
+function zoneSidewalkPoint(zone,samples=120){
+  let best=null;
+  for(let i=0;i<samples;i++){
+    const p=swPts[RI(0,swPts.length-1)];
+    if(!p)break;
+    if(p.x<zone.x1||p.x>zone.x2||p.y<zone.y1||p.y>zone.y2)continue;
+    if(tileAt(p.x,p.y)!==T_SW)continue;
+    best=p;break;
+  }
+  return best;
 }
 function laneAngleForPoint(px,py){
   const orient=roadOrientationAt(px,py);
@@ -392,6 +417,9 @@ function addExplosion(x,y){
 function addBloodStain(x,y,size=R(2.5,6),life=60000){
   G.blood.push({x,y,size,life,maxLife:life});
 }
+function splashBlood(x,y,count=4,sizeMin=2.2,sizeMax=6.4,life=60000){
+  for(let i=0;i<count;i++)addBloodStain(x+R(-8,8),y+R(-8,8),R(sizeMin,sizeMax),life);
+}
 function startBleeding(e,intensity=1){
   if(!e||typeof e.hp!=='number'||!e.alive)return;
   e.bleedRate=Math.max(e.bleedRate||0,intensity);
@@ -406,7 +434,7 @@ function makeCorpse(e,kind='npc'){
     pickupAt:G.time+300000+R(0,120000),
     picked:false
   });
-  addBloodStain(e.x+R(-4,4),e.y+R(-4,4),R(5,9),60000);
+  splashBlood(e.x,e.y,RI(6,11),2.6,9.5,60000);
 }
 function sendPlayerToJail(){
   const jailX=28*TS,jailY=18*TS;
@@ -822,6 +850,14 @@ class Bullet extends Entity{
       if(e instanceof Vehicle){if(dst(this,e)<(e.w||32)/2){e.hit(this.dmg,this);this.alive=false;return;}}
       else if(isCivilianPed(e)||e instanceof CopOfficer||e instanceof MilSoldier){if(dst(this,e)<e.r+2){e.hit(this.dmg,this);this.alive=false;return;}}
     }
+    // Corpses can still be shot for additional blood effects.
+    for(const c of G.corpses){
+      if(dst(this,c)<10){
+        splashBlood(c.x,c.y,RI(5,9),2.4,7.8,60000);
+        this.alive=false;
+        return;
+      }
+    }
     if(this.owner!==G.player&&dst(this,G.player)<G.player.r+2){G.player.hit(this.dmg,this);this.alive=false;}
   }
 }
@@ -1106,7 +1142,7 @@ class Ped extends Entity{
   hit(dmg,src){
     this.hp-=dmg;
     for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#e53e3e',300,3));
-    addBloodStain(this.x+R(-3,3),this.y+R(-3,3),R(2.5,5.5),60000);
+    splashBlood(this.x,this.y,RI(2,4),2.3,6.2,60000);
     startBleeding(this,clamp((40-this.hp)/40,0.2,1));
     if(this.hp<=0){const m=RI(10,120);addMoney(m);notify('+$'+m);makeCorpse(this,'ped');this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){G.kills++;addWanted(10,200);if(G.mission&&G.mission.type==='kill'){const inC2=this.x>CITY2_X1*TS;const inC1=this.x<CITY1_X2*TS;if(G.mission.area==='city2'&&inC2){G.mission.progress++;checkMission();}else if(G.mission.area==='city1'&&inC1){G.mission.progress++;checkMission();}else if(!G.mission.area){G.mission.progress++;checkMission();}}updateMissionObj();}}
   }
@@ -1195,7 +1231,7 @@ class BeachPed extends Entity{
   hit(dmg){
     this.hp-=dmg;
     for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#e53e3e',300,3));
-    addBloodStain(this.x+R(-3,3),this.y+R(-3,3),R(2.5,5),60000);
+    splashBlood(this.x,this.y,RI(2,4),2.3,5.8,60000);
     startBleeding(this,clamp((35-this.hp)/35,0.2,1));
     if(this.hp<=0){makeCorpse(this,'beach');this.alive=false;}
   }
@@ -1241,7 +1277,7 @@ class CopOfficer extends Entity{
   hit(dmg,src){
     this.hp-=dmg;this.stun=200;
     for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#4444ff',300,3));
-    addBloodStain(this.x+R(-2,2),this.y+R(-2,2),R(2.5,5.5),60000);
+    splashBlood(this.x,this.y,RI(2,4),2.3,6.2,60000);
     startBleeding(this,clamp((60-this.hp)/60,0.2,1));
     if(this.hp<=0){makeCorpse(this,'cop');this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){addWanted(18,200);}}
   }
@@ -1294,7 +1330,7 @@ class MilSoldier extends Entity{
   hit(dmg,src){
     this.hp-=dmg;this.stun=180;
     for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#4a6a30',300,3));
-    addBloodStain(this.x+R(-2,2),this.y+R(-2,2),R(2.5,5.5),60000);
+    splashBlood(this.x,this.y,RI(2,4),2.3,6.2,60000);
     startBleeding(this,clamp((80-this.hp)/80,0.2,1));
     if(this.hp<=0){
       makeCorpse(this,'soldier');
@@ -1403,6 +1439,9 @@ class Player extends Entity{
         if(e instanceof CopOfficer&&dst(this,e)<42){e.hit(20+(G.drug&&G.drug.type==='power'?40:0),this);hitCop=true;}
         if(e instanceof Vehicle&&dst(this,e)<42){e.hit(5,this);}
       }
+      for(const c of G.corpses){
+        if(dst(this,c)<42)splashBlood(c.x,c.y,RI(4,7),2.2,7.2,60000);
+      }
       if(hitPed)addWanted(2,850);
       if(hitCop)addWanted(8,300);
     } else if(w==='pistol'&&this.ammo.pistol>0){
@@ -1432,7 +1471,7 @@ class Player extends Entity{
     if(this.hp<=0)return;
     this.hp-=dmg;this.hitFlash=400;
     G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-3,0),'#ff4444',400,5));
-    addBloodStain(this.x+R(-3,3),this.y+R(-3,3),R(3,6),60000);
+    splashBlood(this.x,this.y,RI(2,5),2.5,6.8,60000);
     startBleeding(this,clamp((this.maxHp-this.hp)/this.maxHp,0.2,1));
     this.updateHpBar();
     if(this.hp<=0)G.playerDied();
@@ -1821,12 +1860,20 @@ function updateMedicalSystems(dt){
   const bleedTick=(ent,maxHp)=>{
     if(!ent||!ent.alive||!(ent.bleedRate>0)||!(ent.hp>0))return;
     ent.bleedTick=(ent.bleedTick||0)-dt;
+    ent.bloodTrailT=(ent.bloodTrailT||0)-dt;
     if(ent.bleedTick>0)return;
     const injury=clamp((maxHp-ent.hp)/Math.max(1,maxHp),0,1);
     if(injury<0.12){ent.bleedRate=0;return;}
     const rate=clamp((ent.bleedRate||0)*injury,0.16,1.2);
-    addBloodStain(ent.x+R(-4,4),ent.y+R(-4,4),R(2.2,3.8+injury*4),60000);
-    ent.bleedTick=R(1800,4200)/rate;
+    splashBlood(ent.x,ent.y,RI(1,2),2.1,4.2+injury*4.2,60000);
+    // Serious injuries leave visible movement trail/footprints.
+    const moving=Math.hypot((ent.x-(ent._lastBloodX||ent.x)),(ent.y-(ent._lastBloodY||ent.y)))>4;
+    if(injury>0.62&&moving&&ent.bloodTrailT<=0){
+      splashBlood(ent.x,ent.y,RI(2,4),1.6,3.6,60000);
+      ent.bloodTrailT=R(120,260);
+    }
+    ent._lastBloodX=ent.x;ent._lastBloodY=ent.y;
+    ent.bleedTick=R(900,2200)/rate;
   };
   bleedTick(G.player,G.player.maxHp||100);
   for(const e of G.entities){
@@ -1972,11 +2019,8 @@ function update(dt){
       const a=R(0,Math.PI*2),d=R(250,500);
       const cx=G.player.x+Math.cos(a)*d,cy=G.player.y+Math.sin(a)*d;
       // Find nearest sidewalk point to the candidate position
-      if(swPts.length>0){
-        let best=null,bestD=99999;
-        for(let k=0;k<30;k++){const p=swPts[RI(0,swPts.length-1)];const dd=Math.hypot(p.x-cx,p.y-cy);if(dd<bestD){bestD=dd;best=p;}}
-        if(best&&bestD<300)G.entities.push(new Ped(best.x+R(-8,8),best.y+R(-8,8)));
-      } else if(walkable(cx,cy)&&!onWater(cx,cy)){G.entities.push(new Ped(cx,cy));}
+      const best=sidewalkNear(cx,cy,300,90);
+      if(best)G.entities.push(new Ped(best.x+R(-8,8),best.y+R(-8,8)));
     }
   }
   // Keep ghetto populations active with faction pressure and lowrider presence.
@@ -1984,8 +2028,8 @@ function update(dt){
     for(const faction of zone.factions){
       const gangCount=G.entities.filter(e=>e instanceof GangMember&&e.alive&&e.faction===faction&&e.x>=zone.x1&&e.x<=zone.x2&&e.y>=zone.y1&&e.y<=zone.y2).length;
       if(gangCount<10){
-        const gx=R(zone.x1+16,zone.x2-16),gy=R(zone.y1+16,zone.y2-16);
-        G.entities.push(new GangMember(gx,gy,faction));
+        const sp=zoneSidewalkPoint(zone)||{x:R(zone.x1+16,zone.x2-16),y:R(zone.y1+16,zone.y2-16)};
+        if(tileAt(sp.x,sp.y)===T_SW)G.entities.push(new GangMember(sp.x+R(-6,6),sp.y+R(-6,6),faction));
       }
       const riderCount=G.entities.filter(e=>e instanceof Vehicle&&e.alive&&e.name===faction.toUpperCase()+' Lowrider').length;
       if(riderCount<4&&Math.random()<0.18){
@@ -3423,13 +3467,13 @@ function init(){
   for(let i=0;i<95;i++){
     const pool=swPts.filter(p=>p.x<CITY1_X2*TS&&p.y<RURAL_Y*TS);
     const rp=(pool.length?pool:swPts)[RI(0,(pool.length?pool:swPts).length-1)];
-    G.entities.push(new Ped(rp.x+R(-8,8),rp.y+R(-8,8)));
+    if(rp&&tileAt(rp.x,rp.y)===T_SW)G.entities.push(new Ped(rp.x+R(-8,8),rp.y+R(-8,8)));
   }
   // Pedestrians — city 2 (more criminal types)
   for(let i=0;i<85;i++){
     const pool=swPts.filter(p=>p.x>=CITY2_X1*TS&&p.y<RURAL_Y*TS);
     const rp=(pool.length?pool:swPts)[RI(0,(pool.length?pool:swPts).length-1)];
-    G.entities.push(new Ped(rp.x+R(-8,8),rp.y+R(-8,8)));
+    if(rp&&tileAt(rp.x,rp.y)===T_SW)G.entities.push(new Ped(rp.x+R(-8,8),rp.y+R(-8,8)));
   }
   // Pickups — spread across both cities
   for(let i=0;i<30;i++){const rp=randCity1Road();G.entities.push(new Pickup(rp.x+R(-15,15),rp.y+R(-15,15),'money',RI(50,300)));}
@@ -3446,8 +3490,8 @@ function init(){
   for(const zone of ghettoZones){
     for(const faction of zone.factions){
       for(let i=0;i<14;i++){
-        const gx=R(zone.x1+18,zone.x2-18),gy=R(zone.y1+18,zone.y2-18);
-        G.entities.push(new GangMember(gx,gy,faction));
+        const sp=zoneSidewalkPoint(zone)||{x:R(zone.x1+18,zone.x2-18),y:R(zone.y1+18,zone.y2-18)};
+        if(tileAt(sp.x,sp.y)===T_SW)G.entities.push(new GangMember(sp.x+R(-6,6),sp.y+R(-6,6),faction));
       }
       for(let i=0;i<5;i++){
         const vx=R(zone.x1+30,zone.x2-30),vy=R(zone.y1+30,zone.y2-30);
