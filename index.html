@@ -471,6 +471,12 @@ function streetNameAtWorld(x,y){
   return streetNamesBySegment.get(key);
 }
 function addMoney(n){G.money+=n;document.getElementById('money').textContent='$'+G.money;}
+// NPC deaths should create a loot pickup on the ground.
+// Cash is only awarded when the player walks over the dropped pickup.
+function dropCashPickup(x,y,amount){
+  if(amount<=0)return;
+  G.entities.push(new Pickup(x+R(-6,6),y+R(-6,6),'money',amount));
+}
 function randAppearance(isCop=false,isMil=false){
   const skin=SKIN_TONES[RI(0,SKIN_TONES.length-1)];
   if(isMil)return{skin,shirt:'#4a5a30',pants:'#3a4a20',hair:HAIR_COLS[RI(0,HAIR_COLS.length-1)]};
@@ -1144,7 +1150,13 @@ class Ped extends Entity{
     for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#e53e3e',300,3));
     splashBlood(this.x,this.y,RI(2,4),2.3,6.2,60000);
     startBleeding(this,clamp((40-this.hp)/40,0.2,1));
-    if(this.hp<=0){const m=RI(10,120);addMoney(m);notify('+$'+m);makeCorpse(this,'ped');this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){G.kills++;addWanted(10,200);if(G.mission&&G.mission.type==='kill'){const inC2=this.x>CITY2_X1*TS;const inC1=this.x<CITY1_X2*TS;if(G.mission.area==='city2'&&inC2){G.mission.progress++;checkMission();}else if(G.mission.area==='city1'&&inC1){G.mission.progress++;checkMission();}else if(!G.mission.area){G.mission.progress++;checkMission();}}updateMissionObj();}}
+    if(this.hp<=0){
+      const droppedCash=clamp((this.cash||RI(10,120))|0,5,300);
+      dropCashPickup(this.x,this.y,droppedCash);
+      makeCorpse(this,'ped');
+      this.alive=false;
+      if(src===G.player||src instanceof Bullet&&src.owner===G.player){G.kills++;addWanted(10,200);if(G.mission&&G.mission.type==='kill'){const inC2=this.x>CITY2_X1*TS;const inC1=this.x<CITY1_X2*TS;if(G.mission.area==='city2'&&inC2){G.mission.progress++;checkMission();}else if(G.mission.area==='city1'&&inC1){G.mission.progress++;checkMission();}else if(!G.mission.area){G.mission.progress++;checkMission();}}updateMissionObj();}
+    }
   }
 }
 
@@ -1279,7 +1291,13 @@ class CopOfficer extends Entity{
     for(let i=0;i<4;i++)G.particles.push(new Particle(this.x,this.y,R(-2,2),R(-2,0),'#4444ff',300,3));
     splashBlood(this.x,this.y,RI(2,4),2.3,6.2,60000);
     startBleeding(this,clamp((60-this.hp)/60,0.2,1));
-    if(this.hp<=0){makeCorpse(this,'cop');this.alive=false;if(src===G.player||src instanceof Bullet&&src.owner===G.player){addWanted(18,200);}}
+    if(this.hp<=0){
+      const droppedCash=clamp((this.cash||RI(15,120))|0,10,240);
+      dropCashPickup(this.x,this.y,droppedCash);
+      makeCorpse(this,'cop');
+      this.alive=false;
+      if(src===G.player||src instanceof Bullet&&src.owner===G.player){addWanted(18,200);}
+    }
   }
 }
 
@@ -1333,9 +1351,10 @@ class MilSoldier extends Entity{
     splashBlood(this.x,this.y,RI(2,4),2.3,6.2,60000);
     startBleeding(this,clamp((80-this.hp)/80,0.2,1));
     if(this.hp<=0){
+      const droppedCash=clamp((this.cash||RI(40,180))|0,20,320);
+      dropCashPickup(this.x,this.y,droppedCash);
       makeCorpse(this,'soldier');
       this.alive=false;
-      addMoney(RI(50,200));
       if(src===G.player||src instanceof Bullet&&src.owner===G.player){
         G.kills++;addWanted(10,200);
         if(G.mission&&G.mission.type==='kill'&&G.mission.area==='milbase'){G.mission.progress++;checkMission();}
