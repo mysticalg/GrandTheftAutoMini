@@ -328,6 +328,10 @@ function npcShouldStopAtLight(v,lane){
   const axis=lane?.axis||(Math.abs(Math.cos(v.angle))>Math.abs(Math.sin(v.angle))?'ew':'ns');
   const dirX=Math.cos(v.angle)>=0?1:-1,dirY=Math.sin(v.angle)>=0?1:-1;
   let best=null,bestDist=1e9,bestState='go';
+  // Stop line is before the geometric center of the junction so cars do not
+  // halt inside the crossroads. 2x2 intersections are centered at the light,
+  // and entry edge is roughly half a tile before that center point.
+  const stopLineOffset=TS*0.95;
   for(const light of trafficLights){
     const st=trafficLightState(light,G.time);
     if(axis==='ew'){
@@ -335,11 +339,13 @@ function npcShouldStopAtLight(v,lane){
       // Slightly wider lateral cone keeps lane-following NPCs from missing lights
       // when they are correcting back from the curb/pavement.
       if(along<0||along>240||lateral>30)continue;
-      if(along<bestDist){bestDist=along;best=light;bestState=st.ew;}
+      const distToStop=Math.max(0,along-stopLineOffset);
+      if(distToStop<bestDist){bestDist=distToStop;best=light;bestState=st.ew;}
     }else{
       const along=(light.y-v.y)*dirY,lateral=Math.abs(light.x-v.x);
       if(along<0||along>240||lateral>30)continue;
-      if(along<bestDist){bestDist=along;best=light;bestState=st.ns;}
+      const distToStop=Math.max(0,along-stopLineOffset);
+      if(distToStop<bestDist){bestDist=distToStop;best=light;bestState=st.ns;}
     }
   }
   if(!best)return null;
