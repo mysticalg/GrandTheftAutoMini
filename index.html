@@ -161,8 +161,19 @@ const dst=(a,b)=>Math.hypot(wrapDelta(a.x,b.x,WORLD_W),wrapDelta(a.y,b.y,WORLD_H
 function tileAt(px,py){const tx=wrapCoord(px,WORLD_W)/TS|0,ty=wrapCoord(py,WORLD_H)/TS|0;return map[ty]?.[tx]??T_OCEAN;}
 function drivable(px,py){const t=tileAt(px,py);return t===T_ROAD||t===T_SW||t===T_PARK2||t===T_RUNWAY||t===T_BEACH||t===T_MIL;}
 function npcDrivable(px,py){const t=tileAt(px,py);return t===T_ROAD||t===T_PARK2||t===T_RUNWAY||t===T_MIL;}
-function walkable(px,py){const t=tileAt(px,py);return t!==T_BUILD&&t!==T_WATER&&t!==T_OCEAN;}
-function pedWalkable(px,py){const t=tileAt(px,py);return t===T_SW||t===T_GRASS||t===T_PARK||t===T_PARK2||t===T_BEACH||t===T_MIL;}
+// Sample a small cross-shaped footprint so actors don't clip onto rooftops when
+// their center point is still technically on a sidewalk tile.
+function canOccupyWithRadius(px,py,r,allowTile){
+  const samples=[[0,0],[r,0],[-r,0],[0,r],[0,-r]];
+  for(const [ox,oy] of samples){if(!allowTile(tileAt(px+ox,py+oy)))return false;}
+  return true;
+}
+function walkable(px,py,r=9){
+  return canOccupyWithRadius(px,py,r,t=>t!==T_BUILD&&t!==T_WATER&&t!==T_OCEAN);
+}
+function pedWalkable(px,py,r=7){
+  return canOccupyWithRadius(px,py,r,t=>t===T_SW||t===T_GRASS||t===T_PARK||t===T_PARK2||t===T_BEACH||t===T_MIL);
+}
 function onWater(px,py){const t=tileAt(px,py);return t===T_OCEAN||t===T_WATER;}
 function randRoad(){return roadPts[RI(0,roadPts.length-1)]||{x:1200,y:1200};}
 function randCity1Road(){return city1RoadPts.length?city1RoadPts[RI(0,city1RoadPts.length-1)]:randRoad();}
@@ -742,8 +753,10 @@ function restampBuildingCollisionFromGeometry(){
     if(map[y][x]===T_BUILD&&!keepMilFence(x,y))map[y][x]=T_SW;
   }
   for(const b of bldgs){
-    const x1=((b.x/TS)|0)+1,x2=Math.max(x1,(((b.x+b.w)/TS)|0)-2);
-    const y1=((b.y/TS)|0)+1,y2=Math.max(y1,(((b.y+b.h)/TS)|0)-2);
+    // Keep just a thin inner inset from the rendered walls so collision follows
+    // building silhouettes more closely while still leaving door tiles accessible.
+    const x1=((b.x/TS)|0)+1,x2=Math.max(x1,(((b.x+b.w)/TS)|0)-1);
+    const y1=((b.y/TS)|0)+1,y2=Math.max(y1,(((b.y+b.h)/TS)|0)-1);
     for(let ty=y1;ty<=y2;ty++)for(let tx=x1;tx<=x2;tx++){
       if(tx<1||ty<1||tx>=MW-1||ty>=MH-1)continue;
       const t=map[ty][tx];
