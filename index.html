@@ -53,7 +53,7 @@ body { background:#000; overflow:hidden; font-family:"Courier New",monospace; }
   <div id="hover-tip"></div>
   <div id="zone-label"></div>
   <div id="mission-panel"><div id="mission-title"></div><div id="mission-desc"></div><div id="mission-obj"></div></div>
-  <div id="controls-hint">WASD:Move/Steer | 🚪 Auto Enter/Exit Buildings | E:Vehicle Enter/Exit | 🗺️ Minimap: Wheel Zoom + Drag Pan | Q:Alt+ Z:Alt- | SPACE:Attack | SHIFT:Sprint | F:Interact | G:Repair | H:Drug | R:Respawn | M:Next Mission</div>
+  <div id="controls-hint">WASD:Move/Steer | 🚪 Auto Enter/Exit Buildings | E:Vehicle Enter/Exit | 🗺️ Minimap: Wheel Zoom + Drag Pan | M:Full World Map | N:Next Mission | Q:Alt+ Z:Alt- | SPACE:Attack | SHIFT:Sprint | F:Interact | G:Repair | H:Drug | R:Respawn</div>
   <div id="altitude-bar" style="position:absolute;top:16px;left:50%;transform:translateX(-50%);color:#adf;font-size:13px;font-weight:bold;text-shadow:1px 1px #000;display:none;background:rgba(0,0,0,0.55);padding:4px 14px;border-radius:6px;letter-spacing:1px;"></div>
 </div>
 <div id="wasted-screen"><div id="wasted-text">WASTED</div><div id="wasted-sub">Press R to Respawn</div></div>
@@ -1417,6 +1417,8 @@ const G={
   minimapPanX:0,minimapPanY:0,
   minimapDrag:false,minimapLastX:0,minimapLastY:0,
   minimapDragMoved:false,
+  // Large full-world map overlay (toggled with M) for route planning.
+  fullMapOpen:false,
   // Prevent immediate re-trigger when crossing door thresholds.
   buildingTransitionLock:0,
   // Mission state
@@ -1604,7 +1606,11 @@ document.addEventListener('keydown',e=>{
   if(key==='q'||key==='tab'){e.preventDefault();cycleWeapon();}
   if(key==='r'&&G.player.alive)G.respawn();
   if(key==='m'){
-    // Cycle to next incomplete mission
+    G.fullMapOpen=!G.fullMapOpen;
+    notify(G.fullMapOpen?'🗺️ Full world map opened (press M to close).':'Closed full world map.',1400);
+  }
+  if(key==='n'){
+    // Cycle to next incomplete mission.
     const next=MISSIONS_DATA.find(m=>!G.completedMissions.has(m.id)&&(!G.mission||m.id!==G.mission.id));
     if(next)startMission(next.id);else notify('All missions complete! You are a legend.',3000);
   }
@@ -2363,22 +2369,46 @@ function drawTiles(){
     if(t===T_GRASS){
       ctx.fillStyle=drugT?'hsl('+(((x+y)*2+tt*30)%360)+',70%,35%)':'#3d6b32';ctx.fillRect(px,py,TS,TS);
     } else if(t===T_ROAD){
-      const cx2=x%CELL,cy2=y%CELL;
       ctx.fillStyle=drugT?'hsl('+(tt*20%360)+',30%,20%)':'#272727';ctx.fillRect(px,py,TS,TS);
       if(!drugT){
+        // Keep all roads (grid + winding) visually consistent using neighbor-aware lane markings.
+        const tile=(tx,ty)=>map[(ty+MH)%MH]?.[(tx+MW)%MW];
+        const isRoadish=(tx,ty)=>{const tt2=tile(tx,ty);return tt2===T_ROAD||tt2===T_RUNWAY||tt2===T_MIL;};
+        const u=isRoadish(x,y-1),d=isRoadish(x,y+1),l=isRoadish(x-1,y),r=isRoadish(x+1,y);
+        const roads=(u?1:0)+(d?1:0)+(l?1:0)+(r?1:0);
+        const horiz=l||r,vert=u||d;
+        const cx=px+TS/2,cy=py+TS/2;
+
+        // Subtle asphalt texture.
         ctx.fillStyle='rgba(255,255,255,0.03)';
-        for(let i=0;i<3;i++){ctx.fillRect(px+2+i*10,py+((x+y+i)%5),6,1);}
-        const isVertOnly=(cx2===1||cx2===2)&&!(cy2===1||cy2===2);
-        const isHorizOnly=(cy2===1||cy2===2)&&!(cx2===1||cx2===2);
-        ctx.fillStyle='rgba(255,255,255,0.65)';
-        const isIntersection=(cx2===1||cx2===2)&&(cy2===1||cy2===2);
-        if(cy2===1&&!isIntersection)ctx.fillRect(px,py,TS,2);
-        if(cy2===2&&!isIntersection)ctx.fillRect(px,py+TS-2,TS,2);
-        if(cx2===1&&isVertOnly)ctx.fillRect(px,py,2,TS);
-        if(cx2===2&&isVertOnly)ctx.fillRect(px+TS-2,py,2,TS);
-        ctx.strokeStyle='rgba(255,200,0,0.8)';ctx.lineWidth=2;ctx.setLineDash([8,8]);
-        if(isHorizOnly&&cy2===2&&x%2===0){ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px+TS,py);ctx.stroke();}
-        if(isVertOnly&&cx2===2&&y%2===0){ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px,py+TS);ctx.stroke();}
+        for(let i=0;i<3;i++)ctx.fillRect(px+2+i*10,py+((x+y+i)%5),6,1);
+
+        // Lane edge paint + dashed centerline for standard straight segments.
+        ctx.fillStyle='rgba(255,255,255,0.62)';
+        if(horiz&&!vert){ctx.fillRect(px,py,TS,2);ctx.fillRect(px,py+TS-2,TS,2);}
+        if(vert&&!horiz){ctx.fillRect(px,py,2,TS);ctx.fillRect(px+TS-2,py,2,TS);}
+        ctx.strokeStyle='rgba(255,200,0,0.82)';ctx.lineWidth=2;ctx.setLineDash([8,8]);
+        if(horiz&&!vert){ctx.beginPath();ctx.moveTo(px+2,cy);ctx.lineTo(px+TS-2,cy);ctx.stroke();}
+        if(vert&&!horiz){ctx.beginPath();ctx.moveTo(cx,py+2);ctx.lineTo(cx,py+TS-2);ctx.stroke();}
+
+        // Curved segment styling: draw a dashed center arc and bright shoulder arcs
+        // so sine roads look like proper paved roads instead of blocky blobs.
+        const isCorner=roads===2&&horiz&&vert;
+        if(isCorner){
+          const ar=TS*0.5;
+          const cornerCX=l?px:px+TS;
+          const cornerCY=u?py:py+TS;
+          let a0=0,a1=0;
+          if(r&&d){a0=Math.PI;a1=Math.PI*1.5;}      // top-left corner
+          else if(l&&d){a0=Math.PI*1.5;a1=Math.PI*2;} // top-right corner
+          else if(r&&u){a0=Math.PI*0.5;a1=Math.PI;}   // bottom-left corner
+          else {a0=0;a1=Math.PI*0.5;}                 // bottom-right corner
+          ctx.strokeStyle='rgba(255,255,255,0.62)';ctx.lineWidth=2;ctx.setLineDash([]);
+          ctx.beginPath();ctx.arc(cornerCX,cornerCY,ar-2,a0,a1);ctx.stroke();
+          ctx.beginPath();ctx.arc(cornerCX,cornerCY,ar-12,a0,a1);ctx.stroke();
+          ctx.strokeStyle='rgba(255,200,0,0.82)';ctx.lineWidth=2;ctx.setLineDash([7,7]);
+          ctx.beginPath();ctx.arc(cornerCX,cornerCY,ar-7,a0,a1);ctx.stroke();
+        }
         ctx.setLineDash([]);
       }
     } else if(t===T_SW){
@@ -2599,6 +2629,7 @@ function render(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
     drawInterior();
     drawMinimap();
+    if(G.fullMapOpen)drawFullMapOverlay();
     return;
   }
 
@@ -2757,6 +2788,7 @@ function render(){
     ctx.restore();
   }
   drawMinimap();
+  if(G.fullMapOpen)drawFullMapOverlay();
 }
 
 function drawClouds(opacity,tt){
@@ -3039,6 +3071,61 @@ function drawMinimap(){
   mmx.textAlign='center';
   mmx.fillText('🔍 x'+zoom.toFixed(1),sz/2,16);
   mmx.restore();
+}
+
+function drawFullMapOverlay(){
+  // Large world map overlay for quick navigation planning.
+  const pad=46;
+  const mapW=Math.max(420,canvas.width-pad*2);
+  const mapH=Math.max(280,canvas.height-pad*2);
+  const mx=pad,my=pad;
+  const sx=mapW/WORLD_W,sy=mapH/WORLD_H;
+  const wp=(wx,wy)=>({x:mx+wx*sx,y:my+wy*sy});
+
+  ctx.save();
+  ctx.fillStyle='rgba(2,6,12,0.78)';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='rgba(8,14,20,0.95)';
+  ctx.fillRect(mx,my,mapW,mapH);
+  ctx.strokeStyle='rgba(255,255,255,0.35)';
+  ctx.lineWidth=2;
+  ctx.strokeRect(mx,my,mapW,mapH);
+
+  // Coarse, fast world raster.
+  const step=4;
+  for(let ty=0;ty<MH;ty+=step){
+    for(let tx=0;tx<MW;tx+=step){
+      const t=map[ty][tx];
+      if(t===T_GRASS||t===T_SW||t===T_BUILD)continue;
+      if(t===T_WATER||t===T_OCEAN)ctx.fillStyle='rgba(52,112,188,0.85)';
+      else if(t===T_BEACH)ctx.fillStyle='rgba(196,164,98,0.82)';
+      else if(t===T_ROAD||t===T_RUNWAY)ctx.fillStyle='rgba(220,220,220,0.95)';
+      else if(t===T_MIL)ctx.fillStyle='rgba(110,148,92,0.86)';
+      else continue;
+      ctx.fillRect(mx+tx*TS*sx,my+ty*TS*sy,step*TS*sx+1,step*TS*sy+1);
+    }
+  }
+
+  // POIs.
+  for(const loc of SPECIAL_LOCS){
+    const c={garage:'#00FF41',nightclub:'#FC8181',drugden:'#e040fb',gunshop:'#F6AD55',carshop:'#7dd3fc',boatdock:'#3182CE',helipad:'#FFD700',airstrip:'#fff',milairstrip:'#8f8',milbase:'#4a6',mission_giver:'#FFD700'}[loc.type]||'#bbb';
+    const p=wp(loc.x,loc.y);
+    ctx.fillStyle=c;ctx.fillRect(p.x-2,p.y-2,4,4);
+  }
+
+  // Player + active objective.
+  const pp=wp(wrapCoord(G.player.x,WORLD_W),wrapCoord(G.player.y,WORLD_H));
+  ctx.fillStyle='#ff4040';ctx.beginPath();ctx.arc(pp.x,pp.y,4,0,Math.PI*2);ctx.fill();
+  if(G.mission&&G.mission.state==='active'&&G.mission.targetTile){
+    const mp=wp(G.mission.targetTile.x*TS,G.mission.targetTile.y*TS);
+    ctx.strokeStyle='rgba(255,210,0,0.95)';ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(mp.x,mp.y,7,0,Math.PI*2);ctx.stroke();
+  }
+
+  ctx.fillStyle='rgba(0,0,0,0.72)';ctx.fillRect(mx,my-30,mapW,24);
+  ctx.fillStyle='#fff';ctx.font='bold 13px Courier New';ctx.textAlign='left';
+  ctx.fillText('🗺️ FULL WORLD MAP — M: Close • N: Next Mission',mx+10,my-13);
+  ctx.restore();
 }
 
 
