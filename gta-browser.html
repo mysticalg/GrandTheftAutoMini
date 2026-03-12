@@ -891,9 +891,9 @@ const G={
     document.getElementById('wasted-screen').style.background='rgba(139,0,0,0)';
     document.getElementById('wasted-text').style.opacity=0;
     document.getElementById('wasted-sub').style.opacity=0;
-    // Spawn in center of city 1 — use a road point near tile (70,80)
-    const cx=70*TS,cy=80*TS;
-    let spawnPt=city1RoadPts.length?city1RoadPts.reduce((b,p)=>Math.hypot(p.x-cx,p.y-cy)<Math.hypot(b.x-cx,b.y-cy)?p:b,city1RoadPts[0]):roadPts[Math.floor(roadPts.length/4)]||{x:2240,y:2560};
+    // Spawn in city 1 — use a road point near tile (70,35) — higher up to show the full map!
+    const cx=70*TS,cy=35*TS;
+    let spawnPt=city1RoadPts.length?city1RoadPts.reduce((b,p)=>Math.hypot(p.x-cx,p.y-cy)<Math.hypot(b.x-cx,b.y-cy)?p:b,city1RoadPts[0]):(roadPts.length?roadPts.filter(p=>p.y<120*TS)[0]||roadPts[0]:null)||{x:2240,y:1120};
     G.player=new Player(spawnPt.x,spawnPt.y);
     G.player.alive=true;G.wanted=0;G.drug={type:null,timer:0,maxTimer:0};
     document.getElementById('drug-bar').style.display='none';
@@ -2159,11 +2159,11 @@ function loop(ts){
 // Initialization
 function init(){
   genMap();
-  // Spawn player at center of City 1 (Liberty City)
-  const cx=70*TS,cy=80*TS;
+  // Spawn player at top-center of City 1 (Liberty City) to show full map!
+  const cx=70*TS,cy=35*TS;  // Much higher up now — y=35 instead of y=80
   const spawnPt=city1RoadPts.length?
     city1RoadPts.reduce((b,p)=>Math.hypot(p.x-cx,p.y-cy)<Math.hypot(b.x-cx,b.y-cy)?p:b,city1RoadPts[0]):
-    roadPts[Math.floor(roadPts.length/4)]||{x:2240,y:2560};
+    (roadPts.length?roadPts.filter(p=>p.y<120*TS)[0]||roadPts[0]:null)||{x:2240,y:1120};
   G.player=new Player(spawnPt.x,spawnPt.y);
 
   // City 1 vehicles (regular)
