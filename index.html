@@ -142,6 +142,29 @@ function onWater(px,py){const t=tileAt(px,py);return t===T_OCEAN||t===T_WATER;}
 function randRoad(){return roadPts[RI(0,roadPts.length-1)]||{x:1200,y:1200};}
 function randCity1Road(){return city1RoadPts.length?city1RoadPts[RI(0,city1RoadPts.length-1)]:randRoad();}
 function randCity2Road(){return city2RoadPts.length?city2RoadPts[RI(0,city2RoadPts.length-1)]:randRoad();}
+// Pick a road point near an anchor position so spawned traffic fades in naturally
+// around the player instead of appearing/disappearing at arbitrary map-wide points.
+function roadNear(px,py,pool,minD=480,maxD=1600,samples=60){
+  const src=pool&&pool.length?pool:roadPts;
+  if(!src.length)return randRoad();
+  let fallback=src[RI(0,src.length-1)],best=null,bestScore=1e9;
+  for(let i=0;i<samples;i++){
+    const p=src[RI(0,src.length-1)];
+    const d=Math.hypot(p.x-px,p.y-py);
+    if(d<Math.hypot(fallback.x-px,fallback.y-py))fallback=p;
+    if(d>=minD&&d<=maxD){
+      const score=Math.abs((minD+maxD)*0.5-d);
+      if(score<bestScore){best=p;bestScore=score;}
+    }
+  }
+  return best||fallback;
+}
+function laneAngleForPoint(px,py){
+  const orient=roadOrientationAt(px,py);
+  if(orient==='horizontal')return Math.random()<0.5?0:Math.PI;
+  if(orient==='vertical')return Math.random()<0.5?Math.PI/2:-Math.PI/2;
+  return R(0,Math.PI*2);
+}
 function inCity2Zone(){return G.player&&G.player.x>CITY2_X1*TS&&G.player.y<RURAL_Y*TS;}
 function inMilBase(){return G.player&&G.player.x>MIL.x1*TS&&G.player.x<MIL.x2*TS&&G.player.y>MIL.y1*TS&&G.player.y<MIL.y2*TS;}
 function nrm(x,y){const l=Math.hypot(x,y)||1;return{x:x/l,y:y/l};}
@@ -209,11 +232,12 @@ function npcLaneGuide(v){
   const tx=v.x/TS|0,ty=v.y/TS|0;
   const dirX=Math.cos(v.angle)>=0?1:-1,dirY=Math.sin(v.angle)>=0?1:-1;
   const look=96;
+  // Right-hand traffic: keep to the driver's right side of each road axis.
   if(axis==='ew'){
     const laneY=ty*TS+(dirX>0?TS*0.68:TS*0.32);
     return{x:v.x+dirX*look,y:laneY,axis,isIntersection:orient==='intersection'};
   }
-  const laneX=tx*TS+(dirY>0?TS*0.68:TS*0.32);
+  const laneX=tx*TS+(dirY>0?TS*0.32:TS*0.68);
   return{x:laneX,y:v.y+dirY*look,axis,isIntersection:orient==='intersection'};
 }
 function npcShouldStopAtLight(v,lane){
@@ -678,8 +702,11 @@ class Vehicle extends Entity{
       const moved=Math.hypot(this.x-this.lastX,this.y-this.lastY);
       if(moved<0.3)this.stuckT+=dt;else this.stuckT=0;
       if(this.stuckT>2000){
-        // Teleport to road if deeply stuck
-        const rp=randRoad();this.x=rp.x;this.y=rp.y;
+        // Re-seat near nearby traffic corridor (not map-wide teleport/pop-in).
+        const inC2=this.x>CITY2_X1*TS&&this.y<RURAL_Y*TS;
+        const pool=inC2?city2RoadPts:city1RoadPts;
+        const rp=roadNear(this.x,this.y,pool,180,900,42);
+        this.x=rp.x;this.y=rp.y;
         this.spd=0;this.stuckT=0;this.npcTarget=randRoad();
       }
       this.lastX=this.x;this.lastY=this.y;
@@ -1419,16 +1446,18 @@ function update(dt){
   // Spawn NPC cars — city-zone aware
   G.carSpawnT-=dt;
   if(G.carSpawnT<=0){
-    G.carSpawnT=R(1800,3500);
+    G.carSpawnT=R(2200,4200);
     const carCount=G.entities.filter(e=>e instanceof Vehicle&&e.isNpc&&!e.isPol&&e.alive).length;
-    if(carCount<55){
+    if(carCount<72){
       const inC2=inCity2Zone();
       // City 2 spawns more expensive/dangerous vehicles
       const types=inC2?['sports','sports','muscle','muscle','car','van','bike']:['car','car','car','van','van','truck','bike','bike'];
       const vtype=types[RI(0,types.length-1)];
-      const rp=inC2?randCity2Road():randCity1Road();
+      const pool=inC2?city2RoadPts:city1RoadPts;
+      const rp=roadNear(G.player.x,G.player.y,pool,620,1800,90);
       const v=new Vehicle(rp.x,rp.y,vtype);
       v.isNpc=true;v.driver=v;v.npcTarget=inC2?randCity2Road():randCity1Road();
+      v.angle=laneAngleForPoint(rp.x,rp.y);
       G.entities.push(v);
     }
   }
@@ -1475,7 +1504,15 @@ function update(dt){
   G.cleanT-=dt;
   if(G.cleanT<=0){
     G.cleanT=4000;
-    G.entities=G.entities.filter(e=>e.alive);
+    // Keep traffic persistent over a wider radius, but retire only very distant NPC cars.
+    G.entities=G.entities.filter(e=>{
+      if(!e.alive)return false;
+      if(e instanceof Vehicle&&e.isNpc&&!e.isPol){
+        const d=Math.hypot(e.x-G.player.x,e.y-G.player.y);
+        return d<2800;
+      }
+      return true;
+    });
     G.particles=G.particles.filter(p=>p.alive);
   }
   // Score
@@ -2582,7 +2619,7 @@ function init(){
   // City 1 NPC-driven cars
   for(let i=0;i<25;i++){
     const rp=randCity1Road();const vt=c1Types[RI(0,c1Types.length-1)];
-    const v=new Vehicle(rp.x,rp.y,vt);v.isNpc=true;v.driver=v;v.npcTarget=randCity1Road();v.angle=R(0,Math.PI*2);G.entities.push(v);
+    const v=new Vehicle(rp.x,rp.y,vt);v.isNpc=true;v.driver=v;v.npcTarget=randCity1Road();v.angle=laneAngleForPoint(rp.x,rp.y);G.entities.push(v);
   }
   // City 2 vehicles (more expensive, more dangerous)
   const c2Types=['sports','sports','muscle','muscle','car','van','bike'];
@@ -2593,7 +2630,7 @@ function init(){
   // City 2 NPC-driven cars
   for(let i=0;i<20;i++){
     const rp=randCity2Road();const vt=c2Types[RI(0,c2Types.length-1)];
-    const v=new Vehicle(rp.x,rp.y,vt);v.isNpc=true;v.driver=v;v.npcTarget=randCity2Road();v.angle=R(0,Math.PI*2);G.entities.push(v);
+    const v=new Vehicle(rp.x,rp.y,vt);v.isNpc=true;v.driver=v;v.npcTarget=randCity2Road();v.angle=laneAngleForPoint(rp.x,rp.y);G.entities.push(v);
   }
   // City 1 airport vehicles
   G.entities.push(Object.assign(new Vehicle(116*TS,38*TS,'heli'),{angle:0}));
