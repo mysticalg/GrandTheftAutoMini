@@ -453,8 +453,10 @@ function sendPlayerToJail(){
   G.player.weapon='fists';G.player.ammo={pistol:0,shotgun:0,uzi:0};G.player.updateWeaponHUD();
   G.player.inCar=null;
   G.player.x=jailX+18;G.player.y=jailY+86;
-  G.camera.x=wrapCoord(G.player.x-canvas.width/2,WORLD_W);
-  G.camera.y=wrapCoord(G.player.y-canvas.height/2,WORLD_H);
+  const startViewW=canvas.width/Math.max(0.1,G.cameraZoom);
+  const startViewH=canvas.height/Math.max(0.1,G.cameraZoom);
+  G.camera.x=wrapCoord(G.player.x-startViewW/2,WORLD_W);
+  G.camera.y=wrapCoord(G.player.y-startViewH/2,WORLD_H);
   notify('🚓 Arrested. Released outside police station. Weapons confiscated.',3000);
 }
 function notify(msg,dur=2200){const el=document.getElementById('notification');el.textContent=msg;el.style.opacity=1;clearTimeout(G._notifT);G._notifT=setTimeout(()=>el.style.opacity=0,dur);}
@@ -1599,6 +1601,8 @@ const G={
   money:0,wanted:0,wantedScore:0,wantedT:0,wantedDecayT:0,wantedCooldownT:0,
   time:0,kills:0,score:0,godMode:false,
   camera:{x:0,y:0},shake:0,
+  // Start on-foot gameplay already zoomed in.
+  cameraZoom:4,
   drug:{type:null,timer:0,maxTimer:0},
   _notifT:null,_zoneT:null,engineT:0,
   spawnT:0,cleanT:0,wantedSpawnT:0,heliSpawnT:0,
@@ -1634,11 +1638,37 @@ const G={
     let spawnPt=city1RoadPts.length?city1RoadPts.reduce((b,p)=>Math.hypot(p.x-cx,p.y-cy)<Math.hypot(b.x-cx,b.y-cy)?p:b,city1RoadPts[0]):roadPts[Math.floor(roadPts.length/4)]||{x:2240,y:2560};
     G.player=new Player(spawnPt.x,spawnPt.y);
     G.player.alive=true;G.wanted=0;G.wantedScore=0;G.wantedCooldownT=0;G.drug={type:null,timer:0,maxTimer:0};
+    G.cameraZoom=4;
     document.getElementById('drug-bar').style.display='none';
     G.player.updateHpBar();G.player.updateWeaponHUD();
     updateWantedBar();
   }
 };
+
+/**
+ * Compute gameplay camera zoom based on current locomotion state.
+ * - On foot: keep a tight x4 tactical view.
+ * - In a vehicle: keep x4 while idle, then gradually pull back as speed rises.
+ */
+function getTargetCameraZoom(){
+  const onFootZoom=4;
+  const minVehicleZoom=1;
+  const player=G.player;
+  if(!player||!player.inCar)return onFootZoom;
+  const car=player.inCar;
+  const speed=Math.abs(car.spd||0);
+  // Most vehicles top out near mxS; use that to normalize the zoom blend curve.
+  const speedRatio=clamp(speed/Math.max(0.01,car.mxS||4),0,1);
+  return onFootZoom-(onFootZoom-minVehicleZoom)*speedRatio;
+}
+
+function screenToWorld(screenX,screenY){
+  const zoom=Math.max(0.1,G.cameraZoom||1);
+  return {
+    x:wrapCoord(G.camera.x+screenX/zoom,WORLD_W),
+    y:wrapCoord(G.camera.y+screenY/zoom,WORLD_H)
+  };
+}
 function updateWantedBar(){
   const wb=document.getElementById('wanted-bar');
   wb.innerHTML='';for(let i=0;i<5;i++){const s=document.createElement('span');s.textContent='★';s.style.cssText='font-size:20px;margin-right:2px;text-shadow:1px 1px #000;';s.style.color=i<G.wanted?'#FFD700':'#333';wb.appendChild(s);}
@@ -1684,7 +1714,7 @@ function describeEntityTraits(e){
 function updateHoverTooltip(){
   const tip=document.getElementById('hover-tip');
   if(!G.player||G.indoors){tip.style.display='none';return;}
-  const wx=wrapCoord(G.camera.x+mouseX,WORLD_W),wy=wrapCoord(G.camera.y+mouseY,WORLD_H);
+  const {x:wx,y:wy}=screenToWorld(mouseX,mouseY);
   let best=null,bestD=26;
   for(const e of G.entities){
     if(!e.alive||( !(e instanceof Vehicle) && !isCivilianPed(e) && !(e instanceof CopOfficer) && !(e instanceof MilSoldier)))continue;
@@ -1981,7 +2011,8 @@ function update(dt){
   if(JP[' ']||JP['space'])G.player.attack();
   // Mouse aim
   if(G.player&&!G.player.inCar){
-    const cx=G.player.x-G.camera.x,cy=G.player.y-G.camera.y;
+    const zoom=Math.max(0.1,G.cameraZoom||1);
+    const cx=(G.player.x-G.camera.x)*zoom,cy=(G.player.y-G.camera.y)*zoom;
     if(mouseDown){G.player.angle=Math.atan2(mouseY-cy,mouseX-cx);G.player.attack();}
     else if(mouseX||mouseY){G.player.angle=Math.atan2(mouseY-cy,mouseX-cx);}
   }
@@ -1991,8 +2022,13 @@ function update(dt){
     if(nearDoor)enterBuilding(nearDoor.building);
   }
   // Camera follow
-  const targetCamX=G.player.x-canvas.width/2;
-  const targetCamY=G.player.y-canvas.height/2;
+  const targetZoom=getTargetCameraZoom();
+  // Smooth zoom updates so transitions feel natural while accelerating/braking.
+  G.cameraZoom+= (targetZoom-G.cameraZoom)*0.12;
+  const viewW=canvas.width/Math.max(0.1,G.cameraZoom);
+  const viewH=canvas.height/Math.max(0.1,G.cameraZoom);
+  const targetCamX=G.player.x-viewW/2;
+  const targetCamY=G.player.y-viewH/2;
   G.camera.x+=wrapDelta(G.camera.x,targetCamX,WORLD_W)*0.12;
   G.camera.y+=wrapDelta(G.camera.y,targetCamY,WORLD_H)*0.12;
   G.camera.x=wrapCoord(G.camera.x,WORLD_W);
@@ -2942,8 +2978,11 @@ function render(){
     ctx.translate(-canvas.width/2,-canvas.height/2);
   }
 
+  const worldZoom=Math.max(0.1,G.cameraZoom||1);
   ctx.save();
-  ctx.translate(-Math.floor(G.camera.x)+sx,-Math.floor(G.camera.y)+sy);
+  ctx.translate(sx,sy);
+  ctx.scale(worldZoom,worldZoom);
+  ctx.translate(-Math.floor(G.camera.x),-Math.floor(G.camera.y));
   drawTiles();
   drawGroundEffects();
   drawRailNetwork();
@@ -3535,8 +3574,10 @@ function init(){
     }
   }
   // Camera centered on player
-  G.camera.x=wrapCoord(G.player.x-canvas.width/2,WORLD_W);
-  G.camera.y=wrapCoord(G.player.y-canvas.height/2,WORLD_H);
+  const startViewW=canvas.width/Math.max(0.1,G.cameraZoom);
+  const startViewH=canvas.height/Math.max(0.1,G.cameraZoom);
+  G.camera.x=wrapCoord(G.player.x-startViewW/2,WORLD_W);
+  G.camera.y=wrapCoord(G.player.y-startViewH/2,WORLD_H);
   G.player.updateHpBar();G.player.updateWeaponHUD();updateWantedBar();
   // Start first mission automatically
   setTimeout(()=>{startMission('m1');},2000);
